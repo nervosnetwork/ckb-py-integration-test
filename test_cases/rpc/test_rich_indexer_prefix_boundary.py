@@ -123,7 +123,9 @@ class TestRichIndexerPrefixBoundary:
         # Also: querying the "0x01" prefix must not be affected by the poison
         # cell being matched under "0x00aa".
         got_01 = query_prefix("0x01")
-        assert got_01 == ["0x01aabb"], f"0x01 prefix: expected ['0x01aabb'] got={got_01}"
+        assert got_01 == [
+            "0x01aabb"
+        ], f"0x01 prefix: expected ['0x01aabb'] got={got_01}"
 
         # --- Case 2: all-0xFF prefix (overflow) ---------------------------
         # Expected two cells: "0xffff" and "0xffffcc".
