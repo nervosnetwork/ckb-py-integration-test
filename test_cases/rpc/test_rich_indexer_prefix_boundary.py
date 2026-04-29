@@ -34,12 +34,6 @@ from framework.helper.miner import miner_until_tx_committed
 from test_cases.rpc.node_fixture import get_cluster_indexer
 
 
-# TODO: remove this skip once a CKB release containing PR #5166 is published
-# and the bundled ckb binary is upgraded. The fix currently only lives on the
-# develop branch (post 0.205.0); older released binaries still fail this test.
-@pytest.mark.skip(
-    reason="Enable after CKB release including https://github.com/nervosnetwork/ckb/pull/5166"
-)
 class TestRichIndexerPrefixBoundary:
 
     def test_prefix_upper_boundary(self, get_cluster_indexer):
