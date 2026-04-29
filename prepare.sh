@@ -4,7 +4,7 @@ set -e
 # git checkout develop
 # make prod
 # cp target/release/ckb-cli ../source/ckb-cli
-cp download/0.205.0/ckb-cli ./source/ckb-cli
+cp download/0.204.0/ckb-cli ./source/ckb-cli
 #cp download/0.117.0/ckb-cli ./source/ckb-cli
 #git clone https://github.com/quake/ckb-light-client.git
 #cd ckb-light-client
