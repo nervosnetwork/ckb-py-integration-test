@@ -11,7 +11,6 @@ import zipfile
 import requests
 from tqdm import tqdm
 
-
 versions = [
     "0.5.0",
     "0.5.3",
