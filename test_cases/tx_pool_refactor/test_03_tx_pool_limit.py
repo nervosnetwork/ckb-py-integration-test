@@ -75,7 +75,7 @@ class TestTxPoolLimit(CkbTest):
                 max_ancestors_count,
                 int(raw_tx_pools["pending"][tx_hash]["ancestors_count"], 16),
             )
-        assert max_ancestors_count == 2000
+        assert max_ancestors_count == 1000
 
     def test_sub_tx(self):
         """

@@ -33,7 +33,7 @@ class TestIssue4363(CkbTest):
     def test_01_4363(self):
         """
         https://github.com/nervosnetwork/ckb/blob/develop/util/app-config/src/legacy/tx_pool.rs#L123
-        DEFAULT_MAX_ANCESTORS_COUNT = 2000
+        DEFAULT_MAX_ANCESTORS_COUNT = 1000
         https://github.com/nervosnetwork/ckb/pull/4363/files
         When inserting a cellDep, if the chain is too long, excess transactions in the chain will be deleted.
         0. Generate 250 live cells and cell=a
@@ -104,7 +104,7 @@ class TestIssue4363(CkbTest):
             dep_cells=[{"tx_hash": tx_a_hash, "index_hex": "0x0"}],
         )
         tx1_list.append(tx_hash)
-        for i in range(1, 2005):
+        for i in range(1, 1005):
             print("current i:", i)
             tx_hash = self.Tx.send_transfer_self_tx_with_input(
                 [tx_live_cell_hash],
@@ -177,7 +177,7 @@ class TestIssue4363(CkbTest):
                 pending_status += 1
             if response["tx_status"]["status"] == "rejected":
                 rejected_status += 1
-        assert pending_status == 1999
+        assert pending_status == 999
         assert rejected_status == 6
         # 6. Query tx2 reports PoolRejectedInvalidated
         print("---- tx2_hash------")
