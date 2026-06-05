@@ -24,10 +24,9 @@ if [ "$BUILD_CKB" == "true" ]; then
   git clone -b $GitCKBBranch $GitCKBUrl
   cd ckb
   make prod
-  cp target/prod/ckb ../download/0.120.0/ckb
+  cp target/prod/ckb ../download/0.206.0/ckb
   cd ../
 fi
-cp download/0.110.2/ckb-cli ./source/ckb-cli-old
 if [ "$BUILD_CKB_CLI" == "true" ]; then
   git clone -b $GitCKBCLIBranch $GitCKBCLIUrl
   cd ckb-cli
@@ -35,4 +34,3 @@ if [ "$BUILD_CKB_CLI" == "true" ]; then
   cp target/release/ckb-cli ../source/ckb-cli
   exit 0
 fi
-cp download/0.120.0/ckb-cli ./source/ckb-cli
