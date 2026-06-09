@@ -44,27 +44,27 @@ CkbNodeConfigPath.CURRENT_TEST = CkbNodeConfigPath(
     "source/template/ckb/v200/ckb.toml.j2",
     "source/template/ckb/v200/ckb-miner.toml.j2",
     "source/template/ckb/v200/specs/dev.toml",
-    "download/0.207.0",
+    "download/0.207.0-rc1",
 )
 CkbNodeConfigPath.TESTNET = CkbNodeConfigPath(
     "source/template/ckb/v200/ckb.toml.j2",
     "source/template/ckb/v200/ckb-miner.toml.j2",
     "source/template/specs/testnet.toml.j2",
-    "download/0.207.0",
+    "download/0.207.0-rc1",
 )
 
 CkbNodeConfigPath.CURRENT_MAIN = CkbNodeConfigPath(
     "source/template/ckb/v200/ckb.toml.j2",
     "source/template/ckb/v200/ckb-miner.toml.j2",
     "source/template/specs/mainnet.toml.j2",
-    "download/0.207.0",
+    "download/0.207.0-rc1",
 )
 
 CkbNodeConfigPath.PREVIEW_DUMMY = CkbNodeConfigPath(
     "source/template/ckb/v200/ckb.toml.j2",
     "source/template/ckb/v200/ckb-miner.toml.j2",
     "source/template/specs/preview_dev.toml",
-    "download/0.207.0",
+    "download/0.207.0-rc1",
 )
 
 CkbNodeConfigPath.v202 = CkbNodeConfigPath(
