@@ -42,11 +42,11 @@ jobs:
       run: make test
       env:
         DOCKER: true
-        DOCKER_CKB_VERSION: "nervos/ckb:v0.202.0-rc1"
+        DOCKER_CKB_VERSION: "nervos/ckb:v0.207.0-rc1"
 
 #
 #DOCKER = os.getenv('DOCKER',False)
-#DOCKER_CKB_VERSION = os.getenv('DOCKER_CKB_VERSION',"nervos/ckb:v0.202.0-rc1")
+#DOCKER_CKB_VERSION = os.getenv('DOCKER_CKB_VERSION',"nervos/ckb:v0.207.0-rc1")
 #    - name: Setup upterm session
 #      if: always()
 #      uses: lhotari/action-upterm@v1
