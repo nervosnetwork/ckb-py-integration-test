@@ -16,6 +16,7 @@ import os
 DOCKER = os.getenv("DOCKER", False)
 DOCKER_CKB_VERSION = os.getenv("DOCKER_CKB_VERSION", "nervos/ckb:v0.207.0-rc1")
 
+
 class CkbNodeConfigPath:
     CURRENT_TEST = None
     TESTNET = None
