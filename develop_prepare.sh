@@ -25,7 +25,7 @@ if [ "$BUILD_CKB" == "true" ]; then
   git clone -b $GitCKBBranch $GitCKBUrl
   cd ckb
   make prod
-  cp target/prod/ckb ../download/0.207.0-rc1/ckb
+  cp target/prod/ckb ../download/0.207.0/ckb
   cd ../
 fi
 if [ "$BUILD_CKB_CLI" == "true" ]; then
