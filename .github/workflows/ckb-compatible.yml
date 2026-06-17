@@ -10,9 +10,9 @@ on:
   workflow_dispatch:
     inputs:
       ckb_version:
-        description: 'CKB Version (e.g., v0.204.0)'
+        description: 'CKB Version (e.g., v0.207.0)'
         required: true
-        default: 'v0.204.0'
+        default: 'v0.207.0'
 
 jobs:
   ckb-start-validation:
