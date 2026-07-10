@@ -101,7 +101,10 @@ class TestLightClientFreezerGetBlocksProof(CkbTest):
     def test_get_blocks_proof_for_frozen_matched_block_does_not_panic(self):
         client = self.node.getClient()
         assert int(client.get_current_epoch()["number"], 16) > 2
-        assert client.get_block_hash(hex(self.frozen_block_number)) == self.frozen_block_hash
+        assert (
+            client.get_block_hash(hex(self.frozen_block_number))
+            == self.frozen_block_hash
+        )
 
         self.ckb_light_node = self.CkbLightClientNode.init_by_nodes(
             self.CkbLightClientConfigPath.CURRENT_TEST,
@@ -209,7 +212,11 @@ class TestLightClientFreezerGetBlocksProof(CkbTest):
         proof_marker = f"count={self.EXPECTED_MATCHED_BLOCKS}"
         while time.time() < deadline:
             log = self._read_file(log_path)
-            if matched_marker in log and "send get blocks proof request" in log and proof_marker in log:
+            if (
+                matched_marker in log
+                and "send get blocks proof request" in log
+                and proof_marker in log
+            ):
                 return
             time.sleep(1)
         raise AssertionError(
@@ -242,7 +249,10 @@ class TestLightClientFreezerGetBlocksProof(CkbTest):
                 )
 
             light_client_log = self._read_file(light_client_log_path)
-            if download_marker in light_client_log and matched_count_marker in light_client_log:
+            if (
+                download_marker in light_client_log
+                and matched_count_marker in light_client_log
+            ):
                 return
             time.sleep(1)
         raise AssertionError(
