@@ -96,6 +96,9 @@ class RPCClient:
     def get_fee_rate_statics(self, target=None):
         return self.call("get_fee_rate_statics", [target])
 
+    def estimate_fee_rate(self, estimate_mode=None, enable_fallback=None):
+        return self.call("estimate_fee_rate", [estimate_mode, enable_fallback])
+
     def generate_epochs(self, epoch):
         return self.call("generate_epochs", [epoch])
 
@@ -170,6 +173,9 @@ class RPCClient:
 
     def send_test_transaction(self, tx, outputs_validator="passthrough"):
         return self.call("send_test_transaction", [tx, outputs_validator])
+
+    def notify_transaction(self, tx):
+        return self.call("notify_transaction", [tx])
 
     def get_raw_tx_pool(self, verbose=None):
         return self.call("get_raw_tx_pool", [verbose])
