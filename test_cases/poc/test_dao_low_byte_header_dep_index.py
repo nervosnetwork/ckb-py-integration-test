@@ -360,7 +360,7 @@ class TestDaoLowByteHeaderDepIndex(CkbTest):
             "source/template/ckb/v200/ckb.toml.j2",
             "source/template/ckb/v200/ckb-miner.toml.j2",
             "source/template/specs/mainnet.toml.j2",
-            "download/security",
+            "download/current",
         )
         cls.vulnerable_node = None
         cls.fixed_node = None
