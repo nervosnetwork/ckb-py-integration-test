@@ -9,9 +9,7 @@ COMMITTED_RESPONSE = {"tx_status": {"status": "committed"}}
 class FakeClient:
     def __init__(self, indexer_tips):
         self._indexer_tips = list(indexer_tips)
-        self._last_indexer_tip = (
-            self._indexer_tips[-1] if self._indexer_tips else None
-        )
+        self._last_indexer_tip = self._indexer_tips[-1] if self._indexer_tips else None
         self.indexer_tip_calls = 0
         self.tip_block_number_calls = 0
 
