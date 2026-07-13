@@ -21,10 +21,35 @@ def make_tip_height_number(node, number):
     assert current_tip_number == number
 
 
+def wait_for_indexer(node, target_height, timeout=100):
+    deadline = time.monotonic() + timeout
+    last_indexer_tip = None
+
+    while time.monotonic() < deadline:
+        last_indexer_tip = node.getClient().get_indexer_tip()
+        if (
+            last_indexer_tip is not None
+            and int(last_indexer_tip["block_number"], 16) >= target_height
+        ):
+            return last_indexer_tip
+        time.sleep(1)
+
+    last_indexer_tip_number = (
+        last_indexer_tip["block_number"] if last_indexer_tip is not None else None
+    )
+    raise TimeoutError(
+        "indexer did not reach target height "
+        f"{target_height} within {timeout}s; "
+        f"last indexer tip: {last_indexer_tip_number}"
+    )
+
+
 def miner_until_tx_committed(node, tx_hash, with_unknown=False):
     for i in range(100):
         tx_response = node.getClient().get_transaction(tx_hash)
         if tx_response["tx_status"]["status"] == "committed":
+            target_height = node.getClient().get_tip_block_number()
+            wait_for_indexer(node, target_height)
             return tx_response
         if (
             tx_response["tx_status"]["status"] == "pending"
