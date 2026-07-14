@@ -98,3 +98,37 @@ class TestGetLiveCell(CkbTest):
             )
             # 4. query cell status will be unknown
             assert result["status"] == "unknown"
+            assert result["block_hash"] is None
+
+    def test_get_live_cell_block_hash(self):
+        """Verify block_hash for pending, committed, and spent cells."""
+        account = self.Ckb_cli.util_key_info_by_private_key(self.Config.MINER_PRIVATE_1)
+        tx_hash = self.Ckb_cli.wallet_transfer_by_private_key(
+            self.Config.MINER_PRIVATE_1,
+            account["address"]["testnet"],
+            100,
+            self.node.getClient().url,
+            "1500",
+        )
+        transaction = self.node.getClient().get_transaction(tx_hash)
+        previous_output = transaction["transaction"]["inputs"][0]["previous_output"]
+
+        pending_output = self.node.getClient().get_live_cell_with_include_tx_pool(
+            "0x0", tx_hash, include_tx_pool=True
+        )
+        assert pending_output["status"] == "live"
+        assert pending_output["cell"] is not None
+        assert pending_output["block_hash"] is None
+
+        committed = self.Miner.miner_until_tx_committed(self.node, tx_hash)
+        committed_output = self.node.getClient().get_live_cell("0x0", tx_hash)
+        assert committed_output["status"] == "live"
+        assert committed_output["cell"] is not None
+        assert committed_output["block_hash"] == committed["tx_status"]["block_hash"]
+
+        spent_input = self.node.getClient().get_live_cell(
+            previous_output["index"], previous_output["tx_hash"]
+        )
+        assert spent_input["status"] == "unknown"
+        assert spent_input["cell"] is None
+        assert spent_input["block_hash"] is None
