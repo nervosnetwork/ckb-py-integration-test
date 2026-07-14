@@ -173,8 +173,15 @@ function unpack_script(buf) {
 }
 
 function test_load_extension(){
-    let buf = ckb.load_block_extension(0, ckb.SOURCE_INPUT);
     console.log('---test_load_extension---');
+
+    let error_code = must_throw_exception(() => {
+        let buf = ckb.load_block_extension(1, ckb.SOURCE_CELL_DEP);
+            console.log('---1---');
+            ckb.exit(1);
+    });
+    console.log('---2---');
+
 }
 
 function test_load_extension1(){
@@ -182,5 +189,5 @@ function test_load_extension1(){
 }
 
 
-test_load_extension1();
+test_load_extension();
 ckb.exit(0);

@@ -43,7 +43,9 @@ test_cases := \
     test_cases/get_fee_rate_statistics \
 	test_cases/ws \
 	test_cases/memory \
-	test_cases/ckb_command
+	test_cases/ckb_command \
+	test_cases/poc
+
 
 
 test:

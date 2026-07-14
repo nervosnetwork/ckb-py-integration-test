@@ -122,8 +122,6 @@ class TestOrphanTx(CkbTest):
         # 5. Node 2 calls miner; transactions in the orphan pool will not be included in the blockchain.
         for i in range(20):
             self.Miner.miner_with_version(self.node2, "0x0")
-        node1_pool = self.node1.getClient().tx_pool_info()
-        assert node1_pool["pending"] == "0xb"
         node2_pool = self.node2.getClient().tx_pool_info()
         # assert node2_pool['orphan'] == "0xa"
         assert node2_pool["orphan"] != "0x0"
@@ -136,15 +134,16 @@ class TestOrphanTx(CkbTest):
 
         # 7. Query the transaction pool; orphan transactions are returned to the pending pool.
         self.Node.wait_tx_pool(self.node2, "pending", 1)
-        node1_pool = self.node1.getClient().tx_pool_info()
-        assert node1_pool["pending"] == "0xb"
-        node2_pool = self.node2.getClient().tx_pool_info()
         self.Node.wait_tx_pool(self.node2, "pending", 11)
-        # assert node2_pool['pending'] == "0xb"
+        node2_pool = self.node2.getClient().tx_pool_info()
+        assert node2_pool["orphan"] == "0x0"
+        assert node2_pool["pending"] == "0xb"
 
         # 8. Use node 2's miner; all transactions are added to the blockchain.
         for i in range(10):
             self.Miner.miner_with_version(self.node2, "0x0")
+        height = self.node2.getClient().get_tip_block_number()
+        self.Node.wait_node_height(self.node1, height, 1000)
         node1_pool = self.node1.getClient().tx_pool_info()
         assert node1_pool["orphan"] == "0x0"
         assert node1_pool["pending"] == "0x0"

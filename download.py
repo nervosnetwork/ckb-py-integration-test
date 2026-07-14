@@ -6,6 +6,7 @@ This module downloads files from specified URLs and saves them locally.
 
 import os
 import platform
+import shutil
 import tarfile
 import zipfile
 import requests
@@ -120,6 +121,17 @@ def extract_file(filename, path):
             os.chmod(filepath, 0o755)
 
 
+def sync_current_version(source_path, current_path):
+    if os.path.exists(current_path):
+        shutil.rmtree(current_path)
+    shutil.copytree(source_path, current_path)
+
+
+def get_download_path(ckb_version):
+    release_version = ckb_version.split("-", 1)[0]
+    return os.path.join(DOWNLOAD_DIR, release_version)
+
+
 def download_ckb(ckb_version):
     """
     download ckb from gitHub by ckb version
@@ -137,12 +149,23 @@ def download_ckb(ckb_version):
     ext = SYSTEMS[system][architecture]["ext"]
 
     filename = f"ckb_v{ckb_version}_binary{ext}"
-    download_path = os.path.join(DOWNLOAD_DIR, ckb_version).split("-")[0]
+    download_path = get_download_path(ckb_version)
     os.makedirs(download_path, exist_ok=True)
 
     download_file(url, filename)
     extract_file(filename, download_path)
 
 
-for version in versions:
-    download_ckb(version)
+def main():
+    if not versions:
+        raise ValueError("versions must not be empty")
+    for version in versions:
+        download_ckb(version)
+    sync_current_version(
+        get_download_path(versions[-1]),
+        os.path.join(DOWNLOAD_DIR, "current"),
+    )
+
+
+if __name__ == "__main__":
+    main()
