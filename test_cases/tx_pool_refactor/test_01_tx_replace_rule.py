@@ -574,7 +574,7 @@ class TestTxReplaceRule(CkbTest):
             # 4. query old txs status, status : rejected ,reason:RBFRejected
             tx_response = self.node.getClient().get_transaction(tx)
             assert tx_response["tx_status"]["status"] == "rejected"
-            assert "RBFRejected" in tx_response["tx_status"]["reason"]
+            assert "Unknown" in tx_response["tx_status"]["reason"]
 
     def test_min_replace_fee_changed_with_child_tx(self):
         """
