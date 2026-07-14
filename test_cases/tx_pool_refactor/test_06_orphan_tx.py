@@ -145,6 +145,8 @@ class TestOrphanTx(CkbTest):
         # 8. Use node 2's miner; all transactions are added to the blockchain.
         for i in range(10):
             self.Miner.miner_with_version(self.node2, "0x0")
+        height = self.node2.getClient().get_tip_block_number()
+        self.Node.wait_node_height(self.node1, height, 1000)
         node1_pool = self.node1.getClient().tx_pool_info()
         assert node1_pool["orphan"] == "0x0"
         assert node1_pool["pending"] == "0x0"
