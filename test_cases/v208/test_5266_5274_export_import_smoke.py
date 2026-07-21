@@ -2,7 +2,6 @@ import os
 
 from framework.basic import CkbTest
 from framework.util import run_command
-from test_cases.v208.common import V208_RC0
 
 
 class TestV208ExportImportAndPackageSmoke(CkbTest):
@@ -20,7 +19,10 @@ class TestV208ExportImportAndPackageSmoke(CkbTest):
     @classmethod
     def setup_class(cls):
         cls.source_node = cls.CkbNode.init_dev_by_port(
-            V208_RC0, "v208/export_import/source", 20834, 20835
+            cls.CkbNodeConfigPath.CURRENT_TEST,
+            "v208/export_import/source",
+            20834,
+            20835,
         )
         cls.source_node.prepare()
         cls.source_node.start()
