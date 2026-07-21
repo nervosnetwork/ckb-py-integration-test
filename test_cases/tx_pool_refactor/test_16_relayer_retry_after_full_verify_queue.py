@@ -6,12 +6,17 @@ from framework.basic import CkbTest
 
 
 class TestRelayerRetryAfterFullVerifyQueue(CkbTest):
-    LARGE_FILLER_BATCH_SIZE = 10
-    LARGE_FILLER_WITNESS_BYTES = 500_000
-    MAX_LARGE_FILLER_TXS = 540
-    SMALL_FILLER_BATCH_SIZE = 100
-    SMALL_FILLER_WITNESS_BYTES = 0
-    MAX_SMALL_FILLER_TXS = 5000
+    VERIFY_QUEUE_SIZE_LIMIT = 1_000_000
+    LARGE_FILLER_COUNT = 2
+    LARGE_FILLER_WITNESS_BYTES = 450_000
+    MEDIUM_FILLER_WITNESS_BYTES = 10_000
+    FILLER_WITNESS_SIZES = (
+        [LARGE_FILLER_WITNESS_BYTES] * LARGE_FILLER_COUNT
+        + [MEDIUM_FILLER_WITNESS_BYTES] * 10
+        + [5_000, 2_000, 1_000, 1, 1]
+    )
+    FILLER_TX_COUNT = len(FILLER_WITNESS_SIZES)
+    FILLER_FEE = 1_000_000
 
     @classmethod
     def setup_class(cls):
@@ -30,7 +35,11 @@ class TestRelayerRetryAfterFullVerifyQueue(CkbTest):
         try:
             cls.sender.prepare()
             cls.receiver.prepare(
-                other_ckb_config={"ckb_tx_pool_max_tx_verify_workers": 0}
+                other_ckb_config={
+                    "ckb_tx_pool_max_tx_pool_size": cls.VERIFY_QUEUE_SIZE_LIMIT,
+                    "ckb_tx_pool_max_verify_queue_tx_size": cls.VERIFY_QUEUE_SIZE_LIMIT,
+                    "ckb_tx_pool_max_tx_verify_workers": 0,
+                }
             )
             cls.sender.start()
             cls.receiver.start()
@@ -65,19 +74,19 @@ class TestRelayerRetryAfterFullVerifyQueue(CkbTest):
         self._wait_connected(self.sender, self.receiver)
         self._wait_connected(self.receiver, self.sender)
 
+        filler_txs = self._build_filler_transactions()
         target_tx = self._build_target_transaction()
-        full_queue_size = self._fill_receiver_verify_queue()
+        full_queue_size = self._fill_receiver_verify_queue(filler_txs)
 
         target_hash = self.sender.getClient().send_transaction(target_tx)
         self.Node.wait_get_transaction(self.sender, target_hash, "pending")
         time.sleep(5)
         assert self._verify_queue_size(self.receiver) == full_queue_size
-        assert (
-            self.receiver.getClient().get_transaction(target_hash)["tx_status"][
-                "status"
-            ]
-            == "unknown"
-        )
+        receiver_target_status = self.receiver.getClient().get_transaction(target_hash)[
+            "tx_status"
+        ]
+        assert receiver_target_status["status"] == "rejected"
+        assert '"type":"Full"' in receiver_target_status["reason"]
 
         self.receiver.getClient().clear_tx_verify_queue()
         self._wait_verify_queue_size(self.receiver, 0)
@@ -111,68 +120,76 @@ class TestRelayerRetryAfterFullVerifyQueue(CkbTest):
             api_url=self.sender.getClient().url,
         )
 
-    def _fill_receiver_verify_queue(self):
-        previous_size = self._verify_queue_size(self.receiver)
-        previous_size = self._fill_with_filler_transactions(
-            previous_size,
-            start_index=0,
-            max_txs=self.MAX_LARGE_FILLER_TXS,
-            batch_size=self.LARGE_FILLER_BATCH_SIZE,
-            witness_bytes=self.LARGE_FILLER_WITNESS_BYTES,
+    def _build_filler_transactions(self):
+        account = self.Ckb_cli.util_key_info_by_private_key(
+            self.Config.ACCOUNT_PRIVATE_1
         )
-        return self._fill_with_filler_transactions(
-            previous_size,
-            start_index=self.MAX_LARGE_FILLER_TXS,
-            max_txs=self.MAX_SMALL_FILLER_TXS,
-            batch_size=self.SMALL_FILLER_BATCH_SIZE,
-            witness_bytes=self.SMALL_FILLER_WITNESS_BYTES,
+        fund_tx_hash = self.Ckb_cli.wallet_transfer_by_private_key(
+            self.Config.ACCOUNT_PRIVATE_1,
+            account["address"]["testnet"],
+            360000,
+            api_url=self.sender.getClient().url,
+            fee_rate="1000",
+        )
+        self.Miner.miner_until_tx_committed(self.sender, fund_tx_hash)
+        self.Node.wait_node_height(
+            self.receiver, self.sender.getClient().get_tip_block_number(), 60
         )
 
-    def _fill_with_filler_transactions(
-        self, previous_size, start_index, max_txs, batch_size, witness_bytes
-    ):
-        for batch_start in range(start_index, start_index + max_txs, batch_size):
-            for index in range(batch_start, batch_start + batch_size):
-                tx = self._unknown_transaction(index, witness_bytes)
-                self._notify_filler_transaction(tx)
-            expected_size = previous_size + batch_size
-            current_size = self._wait_verify_queue_progress(
-                previous_size, expected_size
+        split_tx = self.Tx.build_send_transfer_self_tx_with_input(
+            [fund_tx_hash],
+            ["0x0"],
+            self.Config.ACCOUNT_PRIVATE_1,
+            output_count=self.FILLER_TX_COUNT,
+            fee=self.FILLER_FEE,
+            api_url=self.sender.getClient().url,
+        )
+        split_tx_hash = self.sender.getClient().send_transaction(split_tx)
+        self.Miner.miner_until_tx_committed(self.sender, split_tx_hash)
+        self.Node.wait_node_height(
+            self.receiver, self.sender.getClient().get_tip_block_number(), 60
+        )
+
+        filler_txs = []
+        for index, witness_bytes in enumerate(self.FILLER_WITNESS_SIZES):
+            filler_txs.append(
+                (
+                    self._build_filler_transaction(
+                        split_tx_hash, index, witness_bytes
+                    ),
+                    witness_bytes,
+                )
             )
-            if current_size == previous_size:
+        return filler_txs
+
+    def _build_filler_transaction(self, tx_hash, output_index, witness_bytes):
+        tx = self.Tx.build_send_transfer_self_tx_with_input(
+            [tx_hash],
+            [hex(output_index)],
+            self.Config.ACCOUNT_PRIVATE_1,
+            output_count=1,
+            fee=self.FILLER_FEE,
+            api_url=self.sender.getClient().url,
+        )
+        # Keep the valid signature witness intact. The extra witness increases
+        # the serialized size while remaining irrelevant to the lock script.
+        tx["witnesses"].append("0x" + "00" * witness_bytes)
+        return tx
+
+    def _fill_receiver_verify_queue(self, filler_txs):
+        previous_size = self._verify_queue_size(self.receiver)
+        for tx, witness_bytes in filler_txs:
+            self._notify_filler_transaction(tx)
+            current_size = self._wait_verify_queue_progress(
+                previous_size, previous_size + 1
+            )
+            if current_size == previous_size and witness_bytes == 1:
                 assert previous_size > 0
                 return previous_size
-            previous_size = current_size
+            if current_size > previous_size:
+                previous_size = current_size
 
         raise AssertionError("verify queue did not become full")
-
-    def _unknown_transaction(self, index, witness_bytes):
-        lock_arg = f"0x{index + 1:040x}"
-        unknown_input = f"0x{index + 1:064x}"
-        return {
-            "version": "0x0",
-            "cell_deps": [],
-            "header_deps": [],
-            "inputs": [
-                {
-                    "previous_output": {"tx_hash": unknown_input, "index": "0x0"},
-                    "since": "0x0",
-                }
-            ],
-            "outputs": [
-                {
-                    "capacity": "0x2540be400",
-                    "lock": {
-                        "code_hash": "0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8",
-                        "hash_type": "type",
-                        "args": lock_arg,
-                    },
-                    "type": None,
-                }
-            ],
-            "outputs_data": ["0x"],
-            "witnesses": ["0x" + "00" * witness_bytes],
-        }
 
     def _notify_filler_transaction(self, tx):
         self._call_rpc_quiet(self.receiver, "notify_transaction", [tx])

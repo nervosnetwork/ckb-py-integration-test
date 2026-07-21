@@ -570,11 +570,17 @@ class TestTxReplaceRule(CkbTest):
         tx_pool = self.node.getClient().get_raw_tx_pool(True)
         assert len(tx_pool["pending"]) == 1
         assert replace_tx_hash in list(tx_pool["pending"])
-        for tx in tx_list[1:]:
+        for tx in tx_list[1:2]:
             # 4. query old txs status, status : rejected ,reason:RBFRejected
             tx_response = self.node.getClient().get_transaction(tx)
             assert tx_response["tx_status"]["status"] == "rejected"
             assert "RBFRejected" in tx_response["tx_status"]["reason"]
+        for tx in tx_list[2:]:
+            # 4. query old txs status, status : rejected ,reason:Unknown
+            tx_response = self.node.getClient().get_transaction(tx)
+            assert tx_response["tx_status"]["status"] == "rejected"
+            assert "Unknown" in tx_response["tx_status"]["reason"]
+
 
     def test_min_replace_fee_changed_with_child_tx(self):
         """
