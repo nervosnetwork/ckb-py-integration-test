@@ -403,7 +403,7 @@ class TestTxReplaceRule(CkbTest):
                 self.node.getClient().url,
                 int(first_tx["min_replace_fee"], 16),
             )
-        expected_error_message = "RBF rejected: Tx conflict with too many txs, conflict txs count: 101, expect <= 100"
+        expected_error_message = "RBF rejected: Tx conflict with too many txs, conflict txs count: >= 101, expect <= 100"
         assert expected_error_message in exc_info.value.args[0], (
             f"Expected substring '{expected_error_message}' "
             f"not found in actual string '{exc_info.value.args[0]}'"
@@ -620,7 +620,7 @@ class TestTxReplaceRule(CkbTest):
         for tx in tx_list[2:]:
             self.Node.wait_get_transaction(self.node, tx, "rejected")
             tx_response = self.node.getClient().get_transaction(tx)
-            assert "Unknown" in tx_response["tx_status"]["reason"]
+            assert "RBFRejected" in tx_response["tx_status"]["reason"]
 
         self.did_pass = True
 

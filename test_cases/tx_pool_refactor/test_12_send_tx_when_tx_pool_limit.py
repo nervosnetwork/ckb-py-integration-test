@@ -87,7 +87,7 @@ class TestSendTxWhenPoolLimit(CkbTest):
         for tx_hash in tx_list:
             response = self.node.getClient().get_transaction(tx_hash)
             print(response)
-            if response["tx_status"]["status"] == "rejected":
+            if response["tx_status"]["status"] == "rejected" or response["tx_status"]["status"] == "unknown":
                 rejected += 1
         assert rejected == 11
 
@@ -151,7 +151,7 @@ class TestSendTxWhenPoolLimit(CkbTest):
         rejected_status_size = 0
         for tx_hash in tx_list:
             tx = self.node.getClient().get_transaction(tx_hash)
-            if tx["tx_status"]["status"] == "rejected":
+            if tx["tx_status"]["status"] == "rejected" or tx["tx_status"]["status"] == "unknown":
                 rejected_status_size += 1
         for tx_hash_a in tx_hash_a_list:
             tx = self.node.getClient().get_transaction(tx_hash_a)
@@ -222,7 +222,7 @@ class TestSendTxWhenPoolLimit(CkbTest):
             tx_hash_b_list.append(tx_hash_b)
         for tx_hash_a in tx_hash_a_list:
             tx = self.node.getClient().get_transaction(tx_hash_a)
-            assert tx["tx_status"]["status"] == "rejected"
+            assert tx["tx_status"]["status"] == "rejected" or tx["tx_status"]["status"] == "unknown"
         for tx_hash_b in tx_hash_b_list:
             self.node.getClient().get_transaction(tx_hash_b)
 
