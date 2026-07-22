@@ -116,6 +116,7 @@ rpc_batch_limit = {{ ckb_rpc_batch_limit | default("2000") }}
 
 [tx_pool]
 max_tx_pool_size = {{ ckb_tx_pool_max_tx_pool_size | default("180_000_000") }}
+max_verify_queue_tx_size = {{ ckb_tx_pool_max_verify_queue_tx_size | default("256_000_000") }}
 min_fee_rate = {{ ckb_tx_pool_min_fee_rate | default("1_000") }}
 max_tx_verify_cycles = {{ ckb_tx_pool_max_tx_verify_cycles | default("70_000_000") }}
 {% if ckb_tx_pool_max_tx_verify_workers is defined %}

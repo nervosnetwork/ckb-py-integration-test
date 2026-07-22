@@ -46,9 +46,9 @@ class CkbNodeConfigPath:
 
 
 CkbNodeConfigPath.CURRENT_TEST = CkbNodeConfigPath(
-    "source/template/ckb/v200/ckb.toml.j2",
-    "source/template/ckb/v200/ckb-miner.toml.j2",
-    "source/template/ckb/v200/specs/dev.toml",
+    "source/template/ckb/v209/ckb.toml.j2",
+    "source/template/ckb/v209/ckb-miner.toml.j2",
+    "source/template/ckb/v209/specs/dev.toml",
     "download/current",
 )
 CkbNodeConfigPath.TESTNET = CkbNodeConfigPath(

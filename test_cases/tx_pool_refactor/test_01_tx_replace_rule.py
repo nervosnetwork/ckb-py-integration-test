@@ -1,8 +1,49 @@
 import json
 import time
+from pathlib import Path
 
 import pytest
 from framework.basic import CkbTest
+
+
+def _reverse_molecule_dynvec(file_path):
+    """Reverse a Molecule dynamic vector without decoding its transactions."""
+    data = Path(file_path).read_bytes()
+    assert len(data) >= 8
+
+    total_size = int.from_bytes(data[:4], "little")
+    first_offset = int.from_bytes(data[4:8], "little")
+    assert total_size == len(data)
+    assert first_offset % 4 == 0
+
+    item_count = first_offset // 4 - 1
+    assert item_count > 0
+    offsets = [
+        int.from_bytes(data[4 + 4 * i : 8 + 4 * i], "little") for i in range(item_count)
+    ]
+    assert offsets[0] == first_offset
+    assert offsets == sorted(offsets)
+    assert offsets[-1] < total_size
+
+    transactions = [
+        data[start : offsets[index + 1] if index + 1 < item_count else total_size]
+        for index, start in enumerate(offsets)
+    ]
+    transactions.reverse()
+
+    header_size = 4 * (item_count + 1)
+    next_offset = header_size
+    serialized = bytearray(
+        (header_size + sum(map(len, transactions))).to_bytes(4, "little")
+    )
+    for transaction in transactions:
+        serialized.extend(next_offset.to_bytes(4, "little"))
+        next_offset += len(transaction)
+    for transaction in transactions:
+        serialized.extend(transaction)
+
+    assert len(serialized) == total_size
+    Path(file_path).write_bytes(serialized)
 
 
 class TestTxReplaceRule(CkbTest):
@@ -570,17 +611,67 @@ class TestTxReplaceRule(CkbTest):
         tx_pool = self.node.getClient().get_raw_tx_pool(True)
         assert len(tx_pool["pending"]) == 1
         assert replace_tx_hash in list(tx_pool["pending"])
+        # The directly conflicting transaction is rejected by RBF.
         for tx in tx_list[1:2]:
             # 4. query old txs status, status : rejected ,reason:RBFRejected
+            self.Node.wait_get_transaction(self.node, tx, "rejected")
             tx_response = self.node.getClient().get_transaction(tx)
-            assert tx_response["tx_status"]["status"] == "rejected"
             assert "RBFRejected" in tx_response["tx_status"]["reason"]
         for tx in tx_list[2:]:
-            # 4. query old txs status, status : rejected ,reason:Unknown
+            self.Node.wait_get_transaction(self.node, tx, "rejected")
             tx_response = self.node.getClient().get_transaction(tx)
-            assert tx_response["tx_status"]["status"] == "rejected"
             assert "Unknown" in tx_response["tx_status"]["reason"]
 
+        self.did_pass = True
+
+    def test_pending_dependency_chain_survives_restart(self):
+        """
+        A parent -> child pending chain is persisted on shutdown and restored
+        in dependency order after restart. The child must not be lost as a
+        local missing-input transaction during pool reload.
+        """
+        account = self.Ckb_cli.util_key_info_by_private_key(
+            self.Config.ACCOUNT_PRIVATE_1
+        )
+        funding_tx_hash = self.Ckb_cli.wallet_transfer_by_private_key(
+            self.Config.ACCOUNT_PRIVATE_1,
+            account["address"]["testnet"],
+            360000,
+            api_url=self.node.getClient().url,
+            fee_rate="1000",
+        )
+        self.Miner.miner_until_tx_committed(self.node, funding_tx_hash)
+
+        parent_tx_hash = self.Tx.send_transfer_self_tx_with_input(
+            [funding_tx_hash],
+            ["0x0"],
+            self.Config.ACCOUNT_PRIVATE_1,
+            output_count=1,
+            fee=1000,
+            api_url=self.node.getClient().url,
+        )
+        child_tx_hash = self.Tx.send_transfer_self_tx_with_input(
+            [parent_tx_hash],
+            ["0x0"],
+            self.Config.ACCOUNT_PRIVATE_1,
+            output_count=1,
+            fee=1000,
+            api_url=self.node.getClient().url,
+        )
+
+        self.Node.wait_get_transaction(self.node, parent_tx_hash, "pending")
+        self.Node.wait_get_transaction(self.node, child_tx_hash, "pending")
+        assert self.node.getClient().tx_pool_info()["pending"] == "0x2"
+
+        self.node.restart()
+
+        self.Node.wait_get_transaction(self.node, parent_tx_hash, "pending")
+        self.Node.wait_get_transaction(self.node, child_tx_hash, "pending")
+        pool_info = self.node.getClient().tx_pool_info()
+        assert pool_info["pending"] == "0x2"
+        assert pool_info["orphan"] == "0x0"
+
+        self.did_pass = True
 
     def test_min_replace_fee_changed_with_child_tx(self):
         """
