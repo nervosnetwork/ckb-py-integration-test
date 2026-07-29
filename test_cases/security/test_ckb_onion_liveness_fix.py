@@ -44,6 +44,34 @@ def _find_ckb_repo():
     )
 
 
+def _run(cmd, cwd):
+    return subprocess.run(
+        cmd,
+        cwd=cwd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        check=False,
+    )
+
+
+def _assert_deployed_binary_matches_repo(repo):
+    project_root = Path(get_project_root())
+    binary = Path(os.getenv("CKB_BINARY_PATH", project_root / "download/current/ckb"))
+    if not binary.is_file():
+        pytest.skip(f"CKB binary not found: {binary}")
+
+    head = _run(["git", "rev-parse", "--short=7", "HEAD"], repo)
+    assert head.returncode == 0, head.stdout
+
+    version = _run([str(binary), "--version"], project_root)
+    assert version.returncode == 0, version.stdout
+    assert head.stdout.strip() in version.stdout, (
+        f"{binary} was not built from {repo} HEAD {head.stdout.strip()}:\n"
+        f"{version.stdout}"
+    )
+
+
 def test_onion_liveness_wait_drains_bounded_control_lines():
     """
     Verifies PR #5302 for the Tor control-line buffering issue.
@@ -53,6 +81,8 @@ def test_onion_liveness_wait_drains_bounded_control_lines():
     more lines than the channel capacity cannot block the reader before EOF.
     """
     repo = _find_ckb_repo()
+    _assert_deployed_binary_matches_repo(repo)
+
     tor_connection = repo / "util/onion/src/tor_connection.rs"
     source = tor_connection.read_text(encoding="utf-8")
 
@@ -60,7 +90,7 @@ def test_onion_liveness_wait_drains_bounded_control_lines():
         "const CONTROL_LINE_CHANNEL_CAPACITY",
         "mpsc::channel(CONTROL_LINE_CHANNEL_CAPACITY)",
         "pub async fn wait_for_disconnect(mut self) -> bool",
-        "line = self.line_rx.recv()",
+        "Some(_) = self.line_rx.recv()",
         "Discard the unsolicited control line",
         "0..=CONTROL_LINE_CHANNEL_CAPACITY",
     ]
