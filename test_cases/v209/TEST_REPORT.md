@@ -82,7 +82,7 @@ Result:
 
 Workflow:
 
-- https://github.com/nervosnetwork/ckb-py-integration-test/actions/runs/30429233902
+- https://github.com/nervosnetwork/ckb-py-integration-test/actions/runs/30429993404
 
 Inputs:
 
@@ -93,5 +93,5 @@ Result:
 
 ```text
 ckb 0.209.0 (d166e28 2026-07-29)
-3 passed in 30.50s
+3 passed in 30.66s
 ```
