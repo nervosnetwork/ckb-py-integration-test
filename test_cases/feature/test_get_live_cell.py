@@ -101,7 +101,7 @@ class TestGetLiveCell(CkbTest):
             assert result["block_hash"] is None
 
     def test_get_live_cell_block_hash(self):
-        """Verify block_hash for pending, committed, and spent cells."""
+        """Verify CKB #5269 block_hash semantics across a cell lifecycle."""
         account = self.Ckb_cli.util_key_info_by_private_key(self.Config.MINER_PRIVATE_1)
         tx_hash = self.Ckb_cli.wallet_transfer_by_private_key(
             self.Config.MINER_PRIVATE_1,
@@ -113,6 +113,15 @@ class TestGetLiveCell(CkbTest):
         transaction = self.node.getClient().get_transaction(tx_hash)
         previous_output = transaction["transaction"]["inputs"][0]["previous_output"]
 
+        # TP-RPC-LIVE-CELL-001: a pool-only cell is unknown unless the pool is included.
+        pending_output_without_pool = self.node.getClient().get_live_cell(
+            "0x0", tx_hash
+        )
+        assert pending_output_without_pool["status"] == "unknown"
+        assert pending_output_without_pool["cell"] is None
+        assert pending_output_without_pool["block_hash"] is None
+
+        # TP-RPC-LIVE-CELL-002: an uncommitted live cell has no containing block.
         pending_output = self.node.getClient().get_live_cell_with_include_tx_pool(
             "0x0", tx_hash, include_tx_pool=True
         )
@@ -120,15 +129,40 @@ class TestGetLiveCell(CkbTest):
         assert pending_output["cell"] is not None
         assert pending_output["block_hash"] is None
 
+        # TP-RPC-LIVE-CELL-003: a committed live cell reports its creation block.
         committed = self.Miner.miner_until_tx_committed(self.node, tx_hash)
+        creation_block_hash = committed["tx_status"]["block_hash"]
         committed_output = self.node.getClient().get_live_cell("0x0", tx_hash)
         assert committed_output["status"] == "live"
         assert committed_output["cell"] is not None
-        assert committed_output["block_hash"] == committed["tx_status"]["block_hash"]
+        assert committed_output["block_hash"] == creation_block_hash
 
+        # TP-RPC-LIVE-CELL-004: omitting cell data must not omit block_hash.
+        committed_output_without_data = self.node.getClient().get_live_cell(
+            "0x0", tx_hash, with_data=False
+        )
+        assert committed_output_without_data["status"] == "live"
+        assert committed_output_without_data["cell"] is not None
+        assert committed_output_without_data["cell"]["data"] is None
+        assert committed_output_without_data["block_hash"] == creation_block_hash
+
+        # The returned hash remains the creation block after the chain tip advances.
+        self.Miner.miner_with_version(self.node, "0x0")
+        assert self.node.getClient().get_tip_header()["hash"] != creation_block_hash
+        assert (
+            self.node.getClient().get_live_cell("0x0", tx_hash)["block_hash"]
+            == creation_block_hash
+        )
+
+        # TP-RPC-LIVE-CELL-005: spent and nonexistent cells have no block_hash.
         spent_input = self.node.getClient().get_live_cell(
             previous_output["index"], previous_output["tx_hash"]
         )
         assert spent_input["status"] == "unknown"
         assert spent_input["cell"] is None
         assert spent_input["block_hash"] is None
+
+        unknown_output = self.node.getClient().get_live_cell("0xffff", tx_hash)
+        assert unknown_output["status"] == "unknown"
+        assert unknown_output["cell"] is None
+        assert unknown_output["block_hash"] is None
