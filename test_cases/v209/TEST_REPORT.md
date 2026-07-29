@@ -77,3 +77,21 @@ Result:
 ```text
 3 passed, 1 warning in 31.58s
 ```
+
+## CI Validation
+
+Workflow:
+
+- https://github.com/nervosnetwork/ckb-py-integration-test/actions/runs/30429233902
+
+Inputs:
+
+- `binary_url`: `https://github.com/nervosnetwork/ckb/releases/download/v0.209.0/ckb_v0.209.0_x86_64-unknown-linux-gnu.tar.gz`
+- `test_cases`: `test_cases/v209`
+
+Result:
+
+```text
+ckb 0.209.0 (d166e28 2026-07-29)
+3 passed in 30.50s
+```
