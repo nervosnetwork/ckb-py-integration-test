@@ -17,7 +17,7 @@ def test_import_does_not_start_download(monkeypatch):
 
 def test_sync_current_version_replaces_stale_directory(tmp_path):
     download = importlib.import_module("download")
-    source = tmp_path / "0.208.0"
+    source = tmp_path / "0.209.0"
     current = tmp_path / "current"
     (source / "docs").mkdir(parents=True)
     (source / "ckb").write_text("new ckb")
@@ -37,7 +37,7 @@ def test_sync_current_version_replaces_stale_directory(tmp_path):
 def test_main_downloads_all_versions_then_syncs_latest(monkeypatch):
     download = importlib.import_module("download")
     events = []
-    monkeypatch.setattr(download, "versions", ["0.206.0", "0.208.0"])
+    monkeypatch.setattr(download, "versions", ["0.206.0", "0.209.0"])
     monkeypatch.setattr(download, "DOWNLOAD_DIR", "test-download")
     monkeypatch.setattr(
         download,
@@ -54,8 +54,8 @@ def test_main_downloads_all_versions_then_syncs_latest(monkeypatch):
 
     assert events == [
         ("download", "0.206.0"),
-        ("download", "0.208.0"),
-        ("sync", "test-download/0.208.0", "test-download/current"),
+        ("download", "0.209.0"),
+        ("sync", "test-download/0.209.0", "test-download/current"),
     ]
 
 
