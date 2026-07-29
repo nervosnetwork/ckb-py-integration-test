@@ -1,7 +1,6 @@
 import time
 
 from framework.basic import CkbTest
-from test_cases.v208.common import V208_RC0
 
 
 class TestUpgradeTentacle5277(CkbTest):
@@ -19,7 +18,7 @@ class TestUpgradeTentacle5277(CkbTest):
     def setup_class(cls):
         nodes = [
             cls.CkbNode.init_dev_by_port(
-                V208_RC0,
+                cls.CkbNodeConfigPath.CURRENT_TEST,
                 "v208/upgrade_tentacle_5277/node{i}".format(i=i),
                 20814 + i,
                 20825 + i,

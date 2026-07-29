@@ -25,7 +25,9 @@ permissions:
 
 jobs:
   integration-tests:
-    runs-on: ubuntu-22.04
+    # The supplied binary requires GLIBC_2.39; Ubuntu 22.04 only provides
+    # glibc 2.35, while Ubuntu 24.04 provides a compatible glibc.
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
 
     steps:
