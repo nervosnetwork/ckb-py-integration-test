@@ -120,7 +120,13 @@ min_fee_rate = {{ ckb_tx_pool_min_fee_rate | default("1_000") }}
 max_tx_verify_cycles = {{ ckb_tx_pool_max_tx_verify_cycles | default("70_000_000") }}
 max_ancestors_count = {{ ckb_tx_pool_max_ancestors_count | default("25") }}
 min_rbf_rate = {{ ckb_tx_pool_min_rbf_rate | default("1_500") }}
-
+{% if ckb_tx_pool_max_tx_verify_workers is defined %}
+max_tx_verify_workers = {{ ckb_tx_pool_max_tx_verify_workers }}
+{% endif %}
+{% if ckb_fee_estimator_algorithm is defined %}
+[fee_estimator]
+algorithm = "{{ ckb_fee_estimator_algorithm }}"
+{% endif %}
 
 [store]
 header_cache_size          = {{ ckb_store_header_cache_size          | default("4096")}}
@@ -129,6 +135,12 @@ block_proposals_cache_size = {{ ckb_store_block_proposals_cache_size | default("
 block_tx_hashes_cache_size = {{ ckb_store_block_tx_hashes_cache_size | default("30")}}
 block_uncles_cache_size    = {{ ckb_store_block_uncles_cache_size    | default("30")}}
 
+{% if ckb_store_block_extensions_cache_size is defined %}
+block_extensions_cache_size = {{ ckb_store_block_extensions_cache_size }}
+{% endif %}
+{% if ckb_store_freezer_enable is defined %}
+freezer_enable = {{ ckb_store_freezer_enable }}
+{% endif %}
 
 # [notify]
 # # Execute command when the new tip block changes, first arg is block hash.
