@@ -243,6 +243,9 @@ class RPCClient:
     def get_cells_capacity(self, script):
         return self.call("get_cells_capacity", [script])
 
+    def get_overview(self, refresh=None):
+        return self.call("get_overview", [refresh])
+
     def get_current_epoch(self):
         return self.call("get_current_epoch", [])
 
