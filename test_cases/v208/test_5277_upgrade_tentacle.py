@@ -28,7 +28,11 @@ class TestUpgradeTentacle5277(CkbTest):
         cls.cluster = cls.Cluster(nodes)
         cls.cluster.prepare_all_nodes()
         cls.cluster.start_all_nodes()
-        cls.cluster.connected_node(0, 1)
+        # The static dev genesis timestamp is old enough that a height-zero
+        # node is in IBD. Let the source leave IBD first, then have the empty
+        # follower dial it in the same direction as a real initial sync.
+        cls.Miner.make_tip_height_number(cls.cluster.ckb_nodes[0], 1)
+        cls.cluster.ckb_nodes[1].connected(cls.cluster.ckb_nodes[0])
         cls._wait_peer_connected()
 
     @classmethod
@@ -47,11 +51,11 @@ class TestUpgradeTentacle5277(CkbTest):
             if all(count >= 1 for count in connected_counts):
                 return
             time.sleep(1)
-        raise Exception("timeout waiting for v208 nodes to connect")
+        raise Exception("timeout waiting for nodes to connect")
 
     def test_tcp_peer_connection_and_sync_state_after_tentacle_upgrade(self):
         """
-        1. Start two v0.208.0-rc0 dev nodes.
+        1. Start two dev nodes with the current V209 test binary.
         2. Connect them over their advertised TCP multiaddr.
         3. Generate blocks on node0 and wait for node1 to sync.
         4. Check sync_state remains available after the tentacle upgrade.
