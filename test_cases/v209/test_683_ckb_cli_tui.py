@@ -21,6 +21,18 @@ MINER_LOCK_ARGS = "0x8883a512ee2383c01574a328f60eeccbb4d78240"
 MINER_CODE_HASH = "0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8"
 
 
+def ckb_cli_supports_tui():
+    result = subprocess.run(
+        [CKB_CLI_BIN, "--help"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+    return result.returncode == 0 and "    tui " in result.stdout
+
+
 class TuiProcess:
     def __init__(self, args):
         self.home = tempfile.mkdtemp(prefix="ckb-cli-tui-home-")
@@ -92,6 +104,9 @@ class TuiProcess:
             shutil.rmtree(self.home, ignore_errors=True)
 
 
+@pytest.mark.skip(
+    reason="Disabled until nervosnetwork/ckb-cli#683 is merged into ckb-cli mainline"
+)
 class TestV209CkbCliTuiIntegration(CkbTest):
     """
     Regression coverage for nervosnetwork/ckb-cli#683.
@@ -105,6 +120,11 @@ class TestV209CkbCliTuiIntegration(CkbTest):
     def setup_class(cls):
         if not os.path.isfile(CKB_CLI_BIN):
             pytest.skip("source/ckb-cli not found; run develop_prepare first")
+        if not ckb_cli_supports_tui():
+            pytest.skip(
+                "source/ckb-cli does not include the tui subcommand; "
+                "build ckb-cli from nervosnetwork/ckb-cli#683 to run this regression"
+            )
 
         cls.node = cls.CkbNode.init_dev_by_port(
             cls.CkbNodeConfigPath.v209,
