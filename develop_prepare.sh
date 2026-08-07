@@ -29,8 +29,9 @@ if [ "$BUILD_CKB" == "true" ]; then
   cd ../
 fi
 if [ "$BUILD_CKB_CLI" == "true" ]; then
-  git clone -b $GitCKBCLIBranch $GitCKBCLIUrl
+  git clone --recursive -b "$GitCKBCLIBranch" "$GitCKBCLIUrl"
   cd ckb-cli
+  git submodule update --init --recursive
   make prod
   cp target/release/ckb-cli ../source/ckb-cli
   exit 0
