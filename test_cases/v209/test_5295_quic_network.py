@@ -155,17 +155,13 @@ class TestQuicNetwork5295(CkbTest):
         config_path = _install_pr_binary()
         rpc_a, p2p_a, rpc_b, p2p_b, rpc_c, p2p_c = _unused_tcp_ports(6)
 
-        dual_config, dual_miner_config, dual_spec_config = get_ckb_configs(
-            p2p_a, rpc_a
-        )
+        dual_config, dual_miner_config, dual_spec_config = get_ckb_configs(p2p_a, rpc_a)
         dual_config["ckb_network_listen_addresses"] = [
             "/ip4/0.0.0.0/tcp/{}".format(p2p_a),
             "/ip4/0.0.0.0/udp/{}/quic-v1".format(p2p_a),
         ]
 
-        quic_config, quic_miner_config, quic_spec_config = get_ckb_configs(
-            p2p_b, rpc_b
-        )
+        quic_config, quic_miner_config, quic_spec_config = get_ckb_configs(p2p_b, rpc_b)
         quic_config["ckb_network_listen_addresses"] = [
             "/ip4/0.0.0.0/udp/{}/quic-v1".format(p2p_b)
         ]
