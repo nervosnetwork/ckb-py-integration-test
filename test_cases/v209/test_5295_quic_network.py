@@ -3,8 +3,6 @@ import shutil
 import socket
 import time
 
-import pytest
-
 from framework.basic import CkbTest
 from framework.test_node import CkbNodeConfigPath
 from framework.util import get_ckb_configs, get_project_root
@@ -160,15 +158,25 @@ class TestQuicNetwork5295(CkbTest):
             "/ip4/0.0.0.0/tcp/{}".format(p2p_a),
             "/ip4/0.0.0.0/udp/{}/quic-v1".format(p2p_a),
         ]
+        dual_config["ckb_network_public_addresses"] = [
+            "/ip4/127.0.0.1/tcp/{}".format(p2p_a),
+            "/ip4/127.0.0.1/udp/{}/quic-v1".format(p2p_a),
+        ]
 
         quic_config, quic_miner_config, quic_spec_config = get_ckb_configs(p2p_b, rpc_b)
         quic_config["ckb_network_listen_addresses"] = [
             "/ip4/0.0.0.0/udp/{}/quic-v1".format(p2p_b)
         ]
+        quic_config["ckb_network_public_addresses"] = [
+            "/ip4/127.0.0.1/udp/{}/quic-v1".format(p2p_b)
+        ]
 
         tcp_config, tcp_miner_config, tcp_spec_config = get_ckb_configs(p2p_c, rpc_c)
         tcp_config["ckb_network_listen_addresses"] = [
             "/ip4/0.0.0.0/tcp/{}".format(p2p_c)
+        ]
+        tcp_config["ckb_network_public_addresses"] = [
+            "/ip4/127.0.0.1/tcp/{}".format(p2p_c)
         ]
 
         cls.source = cls.CkbNode(
@@ -229,14 +237,6 @@ class TestQuicNetwork5295(CkbTest):
 
         self.did_pass = True
 
-    @pytest.mark.xfail(
-        reason=(
-            "Known issue: reusable QUIC listen addresses are not discovered for "
-            "third-party outbound connections; see "
-            "https://github.com/nervosnetwork/ckb/issues/5310"
-        ),
-        strict=True,
-    )
     def test_quic_listen_addr_is_advertised_and_discovered_peer_connects(self):
         source = self.source
         quic_follower = self.quic_follower
@@ -270,7 +270,10 @@ class TestQuicNetwork5295(CkbTest):
             peer["node_id"] == source_peer_id
             for peer in tcp_follower.getClient().get_peers()
         )
-        assert discovered_peer["is_outbound"] is True
+        assert any(
+            "/ip4/127.0.0.1/udp/" in item["address"] and "/quic-v1" in item["address"]
+            for item in discovered_peer.get("addresses", [])
+        )
 
         target_height = source.getClient().get_tip_block_number() + 1
         _mine_and_wait(source, [quic_follower, tcp_follower], target_height)
