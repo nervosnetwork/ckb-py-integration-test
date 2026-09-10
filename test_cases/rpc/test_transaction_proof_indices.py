@@ -27,10 +27,13 @@ class TestTransactionProofIndices:
     def test_verify_transaction_proof_rejects_empty_duplicate_and_oversized_indices(
         self, proof_node
     ):
+        """TP-INTEGRATION-RPC-PROOF-INDICES-001."""
         client, tx_hash, block = self._committed_transfer_context(proof_node)
         proof = client.get_transaction_proof([tx_hash], block["header"]["hash"])
         tx_count = len(block["transactions"])
         tx_index = proof["proof"]["indices"][0]
+
+        assert client.verify_transaction_proof(copy.deepcopy(proof)) == [tx_hash]
 
         self._assert_invalid_params(
             lambda: client.verify_transaction_proof(
@@ -44,13 +47,18 @@ class TestTransactionProofIndices:
         )
         self._assert_invalid_params(
             lambda: client.verify_transaction_proof(
-                self._with_indices(proof, ["proof"], [tx_index] * (tx_count + 1))
+                self._with_indices(
+                    proof,
+                    ["proof"],
+                    [hex(index) for index in range(tx_count + 1)],
+                )
             )
         )
 
     def test_verify_transaction_and_witness_proof_rejects_empty_duplicate_and_oversized_indices(
         self, proof_node
     ):
+        """TP-INTEGRATION-RPC-PROOF-INDICES-002."""
         client, tx_hash, block = self._committed_transfer_context(proof_node)
         proof = client.get_transaction_and_witness_proof(
             [tx_hash], block["header"]["hash"]
@@ -59,53 +67,49 @@ class TestTransactionProofIndices:
         tx_index = proof["transactions_proof"]["indices"][0]
         witness_index = proof["witnesses_proof"]["indices"][0]
 
+        assert client.verify_transaction_and_witness_proof(copy.deepcopy(proof)) == [
+            tx_hash
+        ]
+
         for proof_key in ["transactions_proof", "witnesses_proof"]:
             self._assert_invalid_params(
-                lambda proof_key=proof_key: client.call(
-                    "verify_transaction_and_witness_proof",
-                    [self._with_indices(proof, [proof_key], [])],
+                lambda proof_key=proof_key: client.verify_transaction_and_witness_proof(
+                    self._with_indices(proof, [proof_key], [])
                 )
             )
 
         self._assert_invalid_params(
-            lambda: client.call(
-                "verify_transaction_and_witness_proof",
-                [
-                    self._with_indices(
-                        proof, ["transactions_proof"], [tx_index, tx_index]
-                    )
-                ],
+            lambda: client.verify_transaction_and_witness_proof(
+                self._with_indices(proof, ["transactions_proof"], [tx_index, tx_index])
             )
         )
         self._assert_invalid_params(
-            lambda: client.call(
-                "verify_transaction_and_witness_proof",
-                [
-                    self._with_indices(
-                        proof, ["witnesses_proof"], [witness_index, witness_index]
-                    )
-                ],
+            lambda: client.verify_transaction_and_witness_proof(
+                self._with_indices(
+                    proof, ["witnesses_proof"], [witness_index, witness_index]
+                )
             )
         )
 
+        oversized_indices = [hex(index) for index in range(tx_count + 1)]
         self._assert_invalid_params(
-            lambda: client.call(
-                "verify_transaction_and_witness_proof",
-                [
-                    self._with_indices(
-                        proof, ["transactions_proof"], [tx_index] * (tx_count + 1)
-                    )
-                ],
+            lambda: client.verify_transaction_and_witness_proof(
+                self._with_indices(proof, ["transactions_proof"], oversized_indices)
             )
         )
         self._assert_invalid_params(
-            lambda: client.call(
-                "verify_transaction_and_witness_proof",
-                [
-                    self._with_indices(
-                        proof, ["witnesses_proof"], [witness_index] * (tx_count + 1)
-                    )
-                ],
+            lambda: client.verify_transaction_and_witness_proof(
+                self._with_indices(proof, ["witnesses_proof"], oversized_indices)
+            )
+        )
+
+        mismatched_witness_index = hex((int(tx_index, 16) + 1) % tx_count)
+        assert mismatched_witness_index != tx_index
+        self._assert_invalid_params(
+            lambda: client.verify_transaction_and_witness_proof(
+                self._with_indices(
+                    proof, ["witnesses_proof"], [mismatched_witness_index]
+                )
             )
         )
 

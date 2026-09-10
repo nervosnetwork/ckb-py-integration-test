@@ -96,6 +96,11 @@ class RPCClient:
     def get_fee_rate_statics(self, target=None):
         return self.call("get_fee_rate_statics", [target])
 
+    def get_fee_rate_statistics(self, target=None):
+        if isinstance(target, int):
+            target = hex(target)
+        return self.call("get_fee_rate_statistics", [target])
+
     def estimate_fee_rate(self, estimate_mode=None, enable_fallback=None):
         return self.call("estimate_fee_rate", [estimate_mode, enable_fallback])
 
@@ -150,6 +155,9 @@ class RPCClient:
 
     def verify_transaction_proof(self, tx_proof):
         return self.call("verify_transaction_proof", [tx_proof])
+
+    def verify_transaction_and_witness_proof(self, tx_proof):
+        return self.call("verify_transaction_and_witness_proof", [tx_proof])
 
     def get_transaction(self, tx_hash, verbosity=None, only_committed=None):
         if verbosity is None and only_committed is None:

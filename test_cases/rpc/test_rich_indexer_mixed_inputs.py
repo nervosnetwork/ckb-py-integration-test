@@ -1,9 +1,9 @@
 """Regression test for https://github.com/nervosnetwork/ckb/pull/5245.
 
 A custom cell filter can leave some previous outputs absent from rich-indexer.
-When one transaction spends an unindexed output before an indexed output, the
-input loop must skip the missing output and continue processing later inputs.
-The old `break` left the indexed output incorrectly visible as a live cell.
+When one transaction mixes indexed and unindexed inputs, the input loop must
+skip each missing output and continue processing later inputs. The old `break`
+left later indexed outputs incorrectly visible as live cells.
 """
 
 import os
@@ -78,8 +78,8 @@ class TestRichIndexerMixedInputs(CkbTest):
             f"rich-indexer did not reach block {target_number} within {timeout}s"
         )
 
-    def test_continues_after_unindexed_input(self):
-        """A missing first input must not hide a later indexed spend."""
+    def test_continues_after_unindexed_inputs_at_start_and_middle(self):
+        """Missing inputs at the start or middle must not hide later spends."""
         full_node = self.cluster.ckb_nodes[0]
         rich_node = self.cluster.ckb_nodes[1]
         client = full_node.getClient()
@@ -113,9 +113,17 @@ class TestRichIndexerMixedInputs(CkbTest):
         )
         assert funding_output is not None, "genesis funding cell not found"
 
+        # Two independent input-order regressions share this source transaction:
+        #
+        #   A: [unindexed 0, indexed 1]
+        #   B: [indexed 2, unindexed 3, indexed 4]
+        #
+        # The second group proves that `continue` also works after the loop has
+        # already processed an indexed input, not only on its first iteration.
+        type_args_by_output = ("0x00", "0x01", "0x01", "0x00", "0x01")
         output_capacity = (
             int(funding_output["capacity"], 16) - SOURCE_TX_FEE_RESERVE
-        ) // 2
+        ) // len(type_args_by_output)
         source_tx_file = f"/tmp/rich-indexer-mixed-inputs-{time.time_ns()}.json"
         try:
             self.Ckb_cli.tx_init(source_tx_file, api_url)
@@ -126,9 +134,8 @@ class TestRichIndexerMixedInputs(CkbTest):
                 funding_tx, funding_index, source_tx_file, api_url
             )
 
-            # output[0] has type args 0x00 and is excluded by the filter.
-            # output[1] has type args 0x01 and is retained by rich-indexer.
-            for type_args in ("0x00", "0x01"):
+            # Type args 0x00 are excluded by the filter; 0x01 are retained.
+            for type_args in type_args_by_output:
                 self.Ckb_cli.tx_add_output(
                     {
                         "capacity": hex(output_capacity),
@@ -174,13 +181,18 @@ class TestRichIndexerMixedInputs(CkbTest):
             "script_type": "type",
             "script_search_mode": "exact",
         }
-        cells_before_spend = rich_client.get_cells(search_key, "asc", "0xff", None)
-        assert [cell["out_point"] for cell in cells_before_spend["objects"]] == [
-            {"tx_hash": source_tx, "index": "0x1"}
-        ]
 
-        # Querying by their shared lock proves the filter excluded output[0],
-        # instead of merely proving that output[1] matches the type search.
+        def indexed_out_points():
+            cells = rich_client.get_cells(search_key, "asc", "0xff", None)
+            return [cell["out_point"] for cell in cells["objects"]]
+
+        expected_indexed = [
+            {"tx_hash": source_tx, "index": index} for index in ("0x1", "0x2", "0x4")
+        ]
+        assert indexed_out_points() == expected_indexed
+
+        # Querying by the shared lock proves the filter excluded outputs 0 and
+        # 3, instead of merely proving the other outputs match the type search.
         cells_for_lock = rich_client.get_cells(
             {
                 "script": funding_output["lock"],
@@ -191,43 +203,50 @@ class TestRichIndexerMixedInputs(CkbTest):
             "0xff",
             None,
         )
-        assert [cell["out_point"] for cell in cells_for_lock["objects"]] == [
-            {"tx_hash": source_tx, "index": "0x1"}
-        ]
-
-        # The unindexed output is deliberately first. With the old `break`,
-        # rich-indexer never reaches the indexed output at input[1].
-        # The helper creates a lock-only change output, so this transaction
-        # cannot introduce another cell matching type args 0x01.
-        mixed_inputs_tx = self.Tx.send_transfer_self_tx_with_input(
-            [source_tx, source_tx],
-            ["0x0", "0x1"],
-            account_private,
-            data="0x00",
-            fee=1000,
-            api_url=api_url,
-            dep_cells=[{"tx_hash": deploy_tx, "index_hex": "0x0"}],
-        )
-        self.Miner.miner_until_tx_committed(full_node, mixed_inputs_tx)
-
-        mixed_inputs = client.get_transaction(mixed_inputs_tx)["transaction"]["inputs"]
         assert [
-            (
-                cell_input["previous_output"]["tx_hash"],
-                cell_input["previous_output"]["index"],
+            cell["out_point"] for cell in cells_for_lock["objects"]
+        ] == expected_indexed
+
+        def spend_source_outputs(indexes):
+            index_hexes = [hex(index) for index in indexes]
+            mixed_inputs_tx = self.Tx.send_transfer_self_tx_with_input(
+                [source_tx] * len(indexes),
+                index_hexes,
+                account_private,
+                data="0x00",
+                fee=1000,
+                api_url=api_url,
+                dep_cells=[{"tx_hash": deploy_tx, "index_hex": "0x0"}],
             )
-            for cell_input in mixed_inputs
-        ] == [(source_tx, "0x0"), (source_tx, "0x1")]
+            self.Miner.miner_until_tx_committed(full_node, mixed_inputs_tx)
 
-        wait_cluster_height(
-            self.cluster, full_node.getClient().get_tip_block_number(), 60
-        )
-        self.wait_for_indexer(rich_node)
-        cells_after_spend = rich_client.get_cells(search_key, "asc", "0xff", None)
+            mixed_inputs = client.get_transaction(mixed_inputs_tx)["transaction"][
+                "inputs"
+            ]
+            assert [
+                (
+                    cell_input["previous_output"]["tx_hash"],
+                    cell_input["previous_output"]["index"],
+                )
+                for cell_input in mixed_inputs
+            ] == [(source_tx, index_hex) for index_hex in index_hexes]
 
-        # `continue` processes input[1], so the previously indexed cell is no
-        # longer returned as live. The old `break` leaves one object here.
-        assert cells_after_spend["objects"] == [], (
-            "rich-indexer must continue after an unindexed input and mark later "
-            "indexed inputs as spent"
-        )
+            wait_cluster_height(
+                self.cluster, full_node.getClient().get_tip_block_number(), 60
+            )
+            self.wait_for_indexer(rich_node)
+
+        # The unindexed output is first. With the old `break`, input[1] is not
+        # marked spent and remains alongside the untouched second group.
+        spend_source_outputs([0, 1])
+        assert (
+            indexed_out_points() == expected_indexed[1:]
+        ), "rich-indexer must continue after an unindexed first input"
+
+        # The unindexed output is now in the middle. Input[2] is processed
+        # before the gap; `continue` must then reach input[4]. The helper's
+        # lock-only change outputs cannot match the 0x01 type search.
+        spend_source_outputs([2, 3, 4])
+        assert (
+            indexed_out_points() == []
+        ), "rich-indexer must continue after an unindexed middle input"

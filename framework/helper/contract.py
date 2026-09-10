@@ -171,19 +171,22 @@ def invoke_ckb_contract(
     input_cells_hashs = [input_cell["tx_hash"] for input_cell in input_cells]
 
     for i in range(len(account_live_cells["live_cells"])):
-        if account_live_cells["live_cells"][i]["tx_hash"] in input_cells_hashs:
+        if input_cell_cap > 10000000000:
+            break
+        live_cell = account_live_cells["live_cells"][i]
+        if (
+            live_cell["tx_hash"] == contract_out_point_tx_hash
+            and live_cell["output_index"] == contract_out_point_tx_index
+        ):
+            continue
+        if live_cell["tx_hash"] in input_cells_hashs:
             continue
         input_cell_out_point = {
-            "tx_hash": account_live_cells["live_cells"][i]["tx_hash"],
-            "index": account_live_cells["live_cells"][i]["output_index"],
+            "tx_hash": live_cell["tx_hash"],
+            "index": live_cell["output_index"],
         }
         input_cell_cap += (
-            float(
-                account_live_cells["live_cells"][i]["capacity"]
-                .replace("(CKB)", "")
-                .strip()
-            )
-            * 100000000
+            float(live_cell["capacity"].replace("(CKB)", "").strip()) * 100000000
         )
 
         input_cell_out_points.append(input_cell_out_point)
