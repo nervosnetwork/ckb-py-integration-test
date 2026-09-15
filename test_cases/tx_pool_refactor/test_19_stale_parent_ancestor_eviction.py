@@ -70,13 +70,13 @@ class TestStaleParentAncestorEviction(CkbTest):
         if node_log.is_file():
             shutil.copy2(node_log, report_dir / "node.log")
 
-    def test_evicting_cell_dep_parent_removes_stale_descendants(self):
+    def test_ancestor_overflow_preserves_cell_dep_parents_and_descendants(self):
         """
-        TP-INT-TXPOOL-5293-001 [P0]: build a default-limit ancestor pressure
-        chain (1,000 entries), then submit a transaction that spends both the
-        chain tail and a cell referenced as tx1's cell dep. Inserting the new
-        transaction must evict tx1 and all 999 descendants, remove every stale
-        parent id, and leave the node alive with only the new transaction.
+        Cover the legacy pool's ancestor-limit off-by-one acceptance: the limit
+        includes the candidate itself, so a 1,000-entry ancestor chain leaves no
+        room for another transaction. Spending both the chain tail and a cell
+        referenced by tx1 must reject without changing the pool. Evicting the
+        candidate's input ancestors must not make it admissible.
         """
         split_tx, cell_b_capacity = self._create_committed_cells_a_and_b()
 
@@ -85,7 +85,7 @@ class TestStaleParentAncestorEviction(CkbTest):
             rpc_url.hostname, rpc_url.port, timeout=30
         )
         try:
-            tx1_hash, tail_hash, tail_capacity = self._submit_ancestor_chain(
+            tail_hash, tail_capacity = self._submit_ancestor_chain(
                 connection,
                 split_tx,
                 cell_b_capacity,
@@ -109,24 +109,19 @@ class TestStaleParentAncestorEviction(CkbTest):
                 ),
                 cell_deps=[self.always_success_dep],
             )
-            replacement_hash = self._rpc_call(
-                connection,
-                "send_transaction",
-                [replacement, "passthrough"],
-            )
+            with self.assertRaisesRegex(
+                Exception, "PoolRejectedTransactionByMaxAncestorsCountLimit"
+            ):
+                self.node.getClient().send_transaction(replacement)
 
             pool_after = self._rpc_call(connection, "get_raw_tx_pool", [True])
         finally:
             connection.close()
 
-        assert tx1_hash not in pool_after["pending"]
-        assert tail_hash not in pool_after["pending"]
-        assert set(pool_after["pending"]) == {replacement_hash}
-        assert pool_after["proposed"] == {}
-        assert int(pool_after["pending"][replacement_hash]["ancestors_count"], 16) == 1
+        assert pool_after == pool_before
 
         pool_info = self.node.getClient().tx_pool_info()
-        assert pool_info["pending"] == "0x1"
+        assert int(pool_info["pending"], 16) == self.CHAIN_LENGTH
         assert pool_info["proposed"] == "0x0"
         assert self.node.getClient().get_tip_header()["hash"].startswith("0x")
         self.did_pass = True
@@ -165,7 +160,6 @@ class TestStaleParentAncestorEviction(CkbTest):
 
     def _submit_ancestor_chain(self, connection, split_tx, capacity):
         previous_out_point = {"tx_hash": split_tx, "index": "0x1"}
-        tx1_hash = None
         tail_hash = None
         deadline = time.monotonic() + 180
 
@@ -194,11 +188,9 @@ class TestStaleParentAncestorEviction(CkbTest):
                 [transaction, "passthrough"],
                 request_id=index,
             )
-            if tx1_hash is None:
-                tx1_hash = tail_hash
             previous_out_point = {"tx_hash": tail_hash, "index": "0x0"}
 
-        return tx1_hash, tail_hash, capacity
+        return tail_hash, capacity
 
     @classmethod
     def _build_transaction(cls, inputs, output_capacity, cell_deps):

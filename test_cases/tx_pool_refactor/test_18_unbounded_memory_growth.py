@@ -15,11 +15,8 @@ from framework.util import get_project_root, run_command
 
 
 class TestUnboundedMemoryGrowth(CkbTest):
-    """End-to-end regression coverage for nervosnetwork/ckb PR #5292."""
+    """Relay mailbox lifecycle and bounded logger control under transaction load."""
 
-    MAX_RELAY_TXS_NUM_PER_BATCH = 32_767
-    MAX_PENDING_RELAY_TX_VERIFY_RESULTS = MAX_RELAY_TXS_NUM_PER_BATCH * 2
-    RESULT_OVERFLOW = 2_048
     LOGGER_LOAD_TRANSACTIONS = 10_000
     REQUEST_BATCH_SIZE = 256
     SUBMIT_TIMEOUT_SECONDS = 240
@@ -30,6 +27,7 @@ class TestUnboundedMemoryGrowth(CkbTest):
     IBD_P2P_PORT = 8461
     IBD_METRICS_PORT = 8462
     METRIC_NAME = "ckb_relay_tx_verify_result_queue_size"
+    CAPACITY_METRIC_NAME = "ckb_relay_tx_verify_result_queue_capacity"
     ALWAYS_SUCCESS_CODE_HASH = (
         "0x28e83a1277d48add8e72fadaa9248559e1b632bab2bd60b27955ebc4c03800a5"
     )
@@ -97,37 +95,14 @@ class TestUnboundedMemoryGrowth(CkbTest):
         if node_log.is_file():
             shutil.copy2(node_log, report_dir / "node.log")
 
-    def test_relay_results_are_trimmed_at_the_production_limit(self):
-        """
-        TP-INT-RELAY-MEM-5292-001 [P0]: with no relay peers, more than 65,534
-        successful transaction-verification results are trimmed by the real
-        300 ms relay notification loop. Successive RBF replacements keep the
-        tx-pool size constant while growing only the result queue under test.
-        """
-        assert self.node.get_connected_count() == 0
-
-        submitted = self._submit_rbf_transactions(
-            self.MAX_PENDING_RELAY_TX_VERIFY_RESULTS + self.RESULT_OVERFLOW,
-            stream_id=1,
-        )
-
-        assert submitted == (
-            self.MAX_PENDING_RELAY_TX_VERIFY_RESULTS + self.RESULT_OVERFLOW
-        )
-        queue_size = self._wait_for_relay_result_queue_trim()
-        assert queue_size == self.MAX_PENDING_RELAY_TX_VERIFY_RESULTS
-
-        assert self.node.getClient().get_tip_header()["hash"].startswith("0x")
-        assert self.node.getClient().tx_pool_info()["verify_queue_size"] == "0x0"
-        assert len(self.node.getClient().get_raw_tx_pool()["pending"]) == 1
+    def test_relay_mailbox_drains_without_peers(self):
+        """Committed relay effects are consumed even when no peer can receive them."""
+        assert self.node.getClient().sync_state()["ibd"] is False
+        self._exercise_relay_mailbox(self.node, self.METRICS_PORT, stream_id=1)
         self.did_pass = True
 
-    def test_relay_results_are_trimmed_during_initial_block_download(self):
-        """
-        TP-INT-RELAY-IBD-MEM-5292-003 [P0]: while the node remains in initial
-        block download, more than 65,534 successful verification results are
-        trimmed by the IBD notification branch instead of growing unbounded.
-        """
+    def test_relay_mailbox_drains_during_initial_block_download(self):
+        """IBD gates broadcasting while committed relay effects keep being consumed."""
         node_path = self._create_always_success_node_path(
             spec_path=self.IBD_SPEC_PATH,
             issue_always_success_cell=True,
@@ -159,28 +134,13 @@ class TestUnboundedMemoryGrowth(CkbTest):
             self._wait_for_metrics_endpoint(self.IBD_METRICS_PORT)
 
             assert ibd_node.getClient().sync_state()["ibd"] is True
-            assert ibd_node.get_connected_count() == 0
-            always_success_dep = self._find_always_success_dep(ibd_node)
-            rbf_source = self._genesis_always_success_source(ibd_node)
-
-            submitted = self._submit_rbf_transactions(
-                self.MAX_PENDING_RELAY_TX_VERIFY_RESULTS + self.RESULT_OVERFLOW,
+            self._exercise_relay_mailbox(
+                ibd_node,
+                self.IBD_METRICS_PORT,
                 stream_id=3,
-                node=ibd_node,
-                rbf_source=rbf_source,
-                always_success_dep=always_success_dep,
+                rbf_source=self._genesis_always_success_source(ibd_node),
+                always_success_dep=self._find_always_success_dep(ibd_node),
             )
-
-            assert submitted == (
-                self.MAX_PENDING_RELAY_TX_VERIFY_RESULTS + self.RESULT_OVERFLOW
-            )
-            assert (
-                self._wait_for_relay_result_queue_trim(self.IBD_METRICS_PORT)
-                == self.MAX_PENDING_RELAY_TX_VERIFY_RESULTS
-            )
-            assert ibd_node.getClient().sync_state()["ibd"] is True
-            assert ibd_node.getClient().tx_pool_info()["verify_queue_size"] == "0x0"
-            assert len(ibd_node.getClient().get_raw_tx_pool()["pending"]) == 1
             self.did_pass = True
         finally:
             if started:
@@ -202,7 +162,7 @@ class TestUnboundedMemoryGrowth(CkbTest):
                 for index in range(2)
             ]
             try:
-                submitted = self._submit_rbf_transactions(
+                submitted, _ = self._submit_rbf_transactions(
                     self.LOGGER_LOAD_TRANSACTIONS,
                     stream_id=2,
                 )
@@ -219,6 +179,35 @@ class TestUnboundedMemoryGrowth(CkbTest):
         assert self.node.getClient().tx_pool_info()["verify_queue_size"] == "0x0"
         assert len(self.node.getClient().get_raw_tx_pool()["pending"]) == 1
         self.did_pass = True
+
+    def _exercise_relay_mailbox(
+        self, node, metrics_port, stream_id, rbf_source=None, always_success_dep=None
+    ):
+        client = node.getClient()
+        ibd = client.sync_state()["ibd"]
+        assert node.get_connected_count() == 0
+        _, capacity = self._relay_mailbox_state(metrics_port)
+        per_round = 2 * capacity
+
+        # Each round publishes more outcomes than the mailbox can retain. Its
+        # consumer must keep progressing, including after the preceding drain.
+        for round_index in range(3):
+            submitted, last_hash = self._submit_rbf_transactions(
+                per_round,
+                stream_id,
+                node=node,
+                rbf_source=rbf_source,
+                always_success_dep=always_success_dep,
+                metrics_port=metrics_port,
+                start_index=round_index * per_round,
+            )
+            assert submitted == per_round
+            self._wait_for_relay_result_queue_drain(metrics_port)
+            assert self._relay_mailbox_state(metrics_port)[1] == capacity
+            assert client.get_raw_tx_pool()["pending"] == [last_hash]
+            assert client.tx_pool_info()["verify_queue_size"] == "0x0"
+            assert client.sync_state()["ibd"] is ibd
+            assert node.get_connected_count() == 0
 
     @classmethod
     def _create_always_success_node_path(
@@ -389,18 +378,21 @@ class TestUnboundedMemoryGrowth(CkbTest):
         node=None,
         rbf_source=None,
         always_success_dep=None,
+        metrics_port=None,
+        start_index=0,
     ):
         target_node = node or self.node
         target_source = rbf_source or self.rbf_source
         target_dep = always_success_dep or self.always_success_dep
         submitted = 0
+        last_hash = None
         deadline = time.monotonic() + self.SUBMIT_TIMEOUT_SECONDS
         rpc_url = urlparse(target_node.getClient().url)
         connection = http.client.HTTPConnection(
             rpc_url.hostname, rpc_url.port, timeout=30
         )
         try:
-            for index in range(target_count):
+            for index in range(start_index, start_index + target_count):
                 if time.monotonic() >= deadline:
                     raise AssertionError(
                         f"submitted only {submitted}/{target_count} transactions "
@@ -430,9 +422,12 @@ class TestUnboundedMemoryGrowth(CkbTest):
                 assert http_response.status == 200, response
                 assert "result" in response, {"index": index, "response": response}
                 submitted += 1
+                last_hash = response["result"]
+                if metrics_port is not None and submitted % 64 == 0:
+                    self._relay_mailbox_state(metrics_port)
         finally:
             connection.close()
-        return submitted
+        return submitted, last_hash
 
     def _build_rbf_transaction(
         self, index, stream_id, rbf_source=None, always_success_dep=None
@@ -460,18 +455,27 @@ class TestUnboundedMemoryGrowth(CkbTest):
             "witnesses": [],
         }
 
-    def _wait_for_relay_result_queue_trim(self, metrics_port=None):
-        target_port = metrics_port or self.METRICS_PORT
+    def _relay_mailbox_state(self, metrics_port):
+        metrics = self._metrics_text(metrics_port)
+        capacity = self._metric_value(metrics, self.CAPACITY_METRIC_NAME)
+        size = self._metric_value(metrics, self.METRIC_NAME)
+        assert (
+            capacity is not None and capacity > 0
+        ), f"relay mailbox capacity missing or invalid: {capacity}"
+        assert (
+            size is not None and 0 <= size <= capacity
+        ), f"relay mailbox occupancy outside its bound: size={size}, capacity={capacity}"
+        return size, capacity
+
+    def _wait_for_relay_result_queue_drain(self, metrics_port):
         last_value = None
         for _ in range(100):
-            last_value = self._metric_value(
-                self._metrics_text(target_port), self.METRIC_NAME
-            )
-            if last_value == self.MAX_PENDING_RELAY_TX_VERIFY_RESULTS:
-                return last_value
+            last_value, _ = self._relay_mailbox_state(metrics_port)
+            if last_value == 0:
+                return
             time.sleep(0.1)
         raise AssertionError(
-            f"{self.METRIC_NAME} was not updated after overflow: {last_value}"
+            f"{self.METRIC_NAME} did not drain after submission: {last_value}"
         )
 
     def _probe_logger_control(self, stop_event, probe_index):
