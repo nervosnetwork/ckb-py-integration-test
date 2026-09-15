@@ -1,19 +1,25 @@
-from framework.test_node import CkbNode
 import time
 from itertools import combinations
 from typing import List
 
+from framework.test_node import CkbNode
+
 
 class Cluster:
+    """Manage nodes and request connections without waiting for peer readiness.
+
+    Fresh dev nodes may disconnect during IBD until the caller starts mining.
+    Callers wait for the height or transaction state their scenario needs.
+    """
 
     def __init__(self, ckb_nodes: List[CkbNode]):
-        self.ckb_nodes: List[CkbNode] = ckb_nodes
+        self.ckb_nodes = ckb_nodes
 
     def add_node(self, node: CkbNode):
         self.ckb_nodes.append(node)
 
-        for num in range(len(self.ckb_nodes) - 1):
-            self.connected_node(num, len(self.ckb_nodes) - 1)
+        for peer in self.ckb_nodes[:-1]:
+            peer.connected(node)
 
     def prepare_all_nodes(
         self, other_ckb_config={}, other_ckb_miner_config={}, other_ckb_spec_config={}
@@ -24,13 +30,12 @@ class Cluster:
             )
 
     def connected_node(self, num1, num2):
-        # A full-duplex link needs only one dial. Do not wait here: fresh
-        # nodes may disconnect during IBD until the caller starts mining.
         self.ckb_nodes[num1].connected(self.ckb_nodes[num2])
 
     def connected_all_nodes(self):
-        for first, second in combinations(range(len(self.ckb_nodes)), 2):
-            self.connected_node(first, second)
+        # Each full-duplex connection needs only one dial.
+        for node, peer in combinations(self.ckb_nodes, 2):
+            node.connected(peer)
 
     def disconnected_node(self, num1, num2):
         pass

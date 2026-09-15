@@ -11,16 +11,16 @@ class TestWs(CkbTest):
         nodes = [
             cls.CkbNode.init_dev_by_port(
                 cls.CkbNodeConfigPath.CURRENT_TEST,
-                "cluster1/node{i}".format(i=i),
+                f"cluster1/node{i}",
                 8114 + i,
                 8225 + i,
             )
-            for i in range(0, 3)
+            for i in range(3)
         ]
 
         cls.cluster = cls.Cluster(nodes)
-        for i in range(0, 3):
-            cls.cluster.ckb_nodes[i].prepare(
+        for i, node in enumerate(nodes):
+            node.prepare(
                 other_ckb_config={
                     "ckb_network_listen_addresses": [
                         f"/ip4/0.0.0.0/tcp/{8225 + i}/ws",
@@ -31,10 +31,11 @@ class TestWs(CkbTest):
             )
 
         cls.cluster.start_all_nodes()
-        cls.Miner.make_tip_height_number(cls.cluster.ckb_nodes[0], 10)
-        cls.cluster.ckb_nodes[0].start_miner()
-        for i in range(1, len(cls.cluster.ckb_nodes)):
-            cls.cluster.ckb_nodes[i].connected_ws(cls.cluster.ckb_nodes[0])
+        source, *followers = nodes
+        cls.Miner.make_tip_height_number(source, 10)
+        source.start_miner()
+        for follower in followers:
+            follower.connected_ws(source)
         cls.Node.wait_cluster_height(cls.cluster, 10, 1000)
 
     @classmethod

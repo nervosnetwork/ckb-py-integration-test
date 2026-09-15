@@ -387,9 +387,6 @@ class TestDaoLowByteHeaderDepIndex(CkbTest):
         cls.fixed_node.prepare()
         cls.fixed_node.start()
 
-        cls.node = cls.vulnerable_node
-        cls.node_security = cls.fixed_node
-
     @classmethod
     def teardown_class(cls):
         for node in (cls.vulnerable_node, cls.fixed_node):

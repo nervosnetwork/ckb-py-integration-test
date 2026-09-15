@@ -18,7 +18,7 @@ from framework.util import get_project_root
 class TestRichIndexerStateRegressions(CkbTest):
     @classmethod
     def setup_class(cls):
-        cls.nodes = [
+        nodes = [
             cls.CkbNode.init_dev_by_port(
                 cls.CkbNodeConfigPath.CURRENT_TEST,
                 f"rpc/rich_indexer_state_regressions/node{i}",
@@ -27,9 +27,8 @@ class TestRichIndexerStateRegressions(CkbTest):
             )
             for i in range(2)
         ]
-        cls.full_node = cls.nodes[0]
-        cls.rich_node = cls.nodes[1]
-        cls.cluster = cls.Cluster(cls.nodes)
+        cls.full_node, cls.rich_node = nodes
+        cls.cluster = cls.Cluster(nodes)
         cls.cluster.clean_all_nodes()
         cls.cluster.prepare_all_nodes()
 
@@ -143,7 +142,7 @@ class TestRichIndexerStateRegressions(CkbTest):
             full_tip_hash = full_client.get_tip_header()["hash"]
         finally:
             rich_client.set_network_active(True)
-            self.cluster.connected_node(1, 0)
+            self.rich_node.connected(self.full_node)
 
         self._wait_for_node_tip(self.rich_node, full_tip_hash)
         self._wait_for_indexer_tip(full_tip_hash)

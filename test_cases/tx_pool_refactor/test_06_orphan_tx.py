@@ -16,11 +16,9 @@ class TestOrphanTx(CkbTest):
             cls.CkbNodeConfigPath.CURRENT_TEST, "node/node2", 8116, 8117
         )
 
-        cls.node1.prepare()
-        cls.node1.start()
-
-        cls.node2.prepare()
-        cls.node2.start()
+        for node in (cls.node1, cls.node2):
+            node.prepare()
+            node.start()
 
         cls.Miner.make_tip_height_number(cls.node1, 300)
         cls.node2.connected(cls.node1)
@@ -28,12 +26,9 @@ class TestOrphanTx(CkbTest):
 
     @classmethod
     def teardown_class(cls):
-        cls.node1.stop()
-        cls.node1.clean()
-
-        cls.node2.stop()
-        cls.node2.clean()
-        pass
+        for node in (cls.node1, cls.node2):
+            node.stop()
+            node.clean()
 
     def setup_method(self, method):
         for i in range(10):
