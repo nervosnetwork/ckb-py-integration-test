@@ -1,5 +1,6 @@
 from framework.test_node import CkbNode
 import time
+from itertools import combinations
 from typing import List
 
 
@@ -23,13 +24,24 @@ class Cluster:
             )
 
     def connected_node(self, num1, num2):
-        self.ckb_nodes[num1].connected(self.ckb_nodes[num2])
-        self.ckb_nodes[num2].connected(self.ckb_nodes[num1])
+        first, second = self.ckb_nodes[num1], self.ckb_nodes[num2]
+        links = [(first, second.get_peer_id()), (second, first.get_peer_id())]
+        # One connection carries traffic in both directions. Simultaneous
+        # reciprocal dials can make both peers discard each other's connection.
+        first.connected(second)
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if all(
+                any(peer["node_id"] == peer_id for peer in node.getClient().get_peers())
+                for node, peer_id in links
+            ):
+                return
+            time.sleep(0.1)
+        raise TimeoutError(f"Peer connection did not complete: {links}")
 
     def connected_all_nodes(self):
-        for num in range(len(self.ckb_nodes)):
-            for link_num in range(len(self.ckb_nodes)):
-                self.connected_node(num, link_num)
+        for first, second in combinations(range(len(self.ckb_nodes)), 2):
+            self.connected_node(first, second)
 
     def disconnected_node(self, num1, num2):
         pass
