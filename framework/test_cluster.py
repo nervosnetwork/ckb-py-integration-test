@@ -24,20 +24,9 @@ class Cluster:
             )
 
     def connected_node(self, num1, num2):
-        first, second = self.ckb_nodes[num1], self.ckb_nodes[num2]
-        links = [(first, second.get_peer_id()), (second, first.get_peer_id())]
-        # One connection carries traffic in both directions. Simultaneous
-        # reciprocal dials can make both peers discard each other's connection.
-        first.connected(second)
-        deadline = time.monotonic() + 10
-        while time.monotonic() < deadline:
-            if all(
-                any(peer["node_id"] == peer_id for peer in node.getClient().get_peers())
-                for node, peer_id in links
-            ):
-                return
-            time.sleep(0.1)
-        raise TimeoutError(f"Peer connection did not complete: {links}")
+        # A full-duplex link needs only one dial. Do not wait here: fresh
+        # nodes may disconnect during IBD until the caller starts mining.
+        self.ckb_nodes[num1].connected(self.ckb_nodes[num2])
 
     def connected_all_nodes(self):
         for first, second in combinations(range(len(self.ckb_nodes)), 2):

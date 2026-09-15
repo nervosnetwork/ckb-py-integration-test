@@ -75,6 +75,8 @@ class TestCkbJsVm(CkbTest):
             8114 + 6,
             8225 + 6,
         )
+        self.addClassCleanup(self.node_new_2.clean)
+        self.addCleanup(self.node_new_2.stop)
         self.node_new_2.prepare(
             other_ckb_config={"ckb_logger_filter": "info,ckb_script=debug"}
         )
@@ -143,6 +145,8 @@ class TestCkbJsVm(CkbTest):
             8114 + 5,
             8225 + 5,
         )
+        self.addClassCleanup(self.node_new.clean)
+        self.addCleanup(self.node_new.stop)
         self.node_new.prepare(
             other_ckb_config={"ckb_logger_filter": "info,ckb_script=debug"}
         )

@@ -22,11 +22,8 @@ class TestOrphanTx(CkbTest):
         cls.node2.prepare()
         cls.node2.start()
 
-        cls.node1.connected(cls.node2)
-
-        time.sleep(5)
         cls.Miner.make_tip_height_number(cls.node1, 300)
-
+        cls.node2.connected(cls.node1)
         cls.Node.wait_node_height(cls.node2, 300, 1500)
 
     @classmethod

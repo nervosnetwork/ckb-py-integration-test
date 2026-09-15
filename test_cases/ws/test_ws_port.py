@@ -33,7 +33,7 @@ class TestWs(CkbTest):
         cls.cluster.start_all_nodes()
         cls.Miner.make_tip_height_number(cls.cluster.ckb_nodes[0], 10)
         cls.cluster.ckb_nodes[0].start_miner()
-        for i in range(len(cls.cluster.ckb_nodes)):
+        for i in range(1, len(cls.cluster.ckb_nodes)):
             cls.cluster.ckb_nodes[i].connected_ws(cls.cluster.ckb_nodes[0])
         cls.Node.wait_cluster_height(cls.cluster, 10, 1000)
 

@@ -387,8 +387,6 @@ class TestDaoLowByteHeaderDepIndex(CkbTest):
         cls.fixed_node.prepare()
         cls.fixed_node.start()
 
-        cls.vulnerable_node.connected(cls.fixed_node)
-        cls.fixed_node.connected(cls.vulnerable_node)
         cls.node = cls.vulnerable_node
         cls.node_security = cls.fixed_node
 
@@ -414,13 +412,8 @@ class TestDaoLowByteHeaderDepIndex(CkbTest):
             self.__class__.vulnerable_node = None
             self.__class__.fixed_node = None
 
-    def _ensure_connected(self):
-        if self.vulnerable_node.get_connected_count() == 0:
-            self.vulnerable_node.connected(self.fixed_node)
-        if self.fixed_node.get_connected_count() == 0:
-            self.fixed_node.connected(self.vulnerable_node)
-
     def _sync_fixed_to_vulnerable_tip(self):
+        self.fixed_node.connected(self.vulnerable_node)
         tip_number = self.vulnerable_node.getClient().get_tip_block_number()
         self.Node.wait_node_height(self.fixed_node, tip_number, 120)
 
@@ -655,7 +648,6 @@ class TestDaoLowByteHeaderDepIndex(CkbTest):
         self.did_pass = True
 
     def test_03_fixed_node_rejects_synced_abnormal_transaction(self):
-        self._ensure_connected()
         source_client = self.vulnerable_node.getClient()
         fixed_client = self.fixed_node.getClient()
         fixture = self._build_dao_low_byte_fixture(self.vulnerable_node)
@@ -688,7 +680,6 @@ class TestDaoLowByteHeaderDepIndex(CkbTest):
         self.did_pass = True
 
     def test_04_fixed_node_rejects_synced_abnormal_block(self):
-        self._ensure_connected()
         source_client = self.vulnerable_node.getClient()
         fixed_client = self.fixed_node.getClient()
         fixture = self._build_dao_low_byte_fixture(self.vulnerable_node)

@@ -143,8 +143,7 @@ class TestRichIndexerStateRegressions(CkbTest):
             full_tip_hash = full_client.get_tip_header()["hash"]
         finally:
             rich_client.set_network_active(True)
-            self.full_node.connected(self.rich_node)
-            self.rich_node.connected(self.full_node)
+            self.cluster.connected_node(1, 0)
 
         self._wait_for_node_tip(self.rich_node, full_tip_hash)
         self._wait_for_indexer_tip(full_tip_hash)
