@@ -27,6 +27,7 @@
 
 ## 实现与限制
 
+- 当前默认 CI 的 `download/current` 仍是官方 `ckb 0.209.0 (d166e28 2026-07-29)`，不包含 CKB PR #5236。测试类因此临时标记为 skip；用例、严格错误优先级断言和辅助代码均保留，待 CI 二进制包含 #5236 后移除标记恢复执行。
 - 自动化：[测试类](https://github.com/nervosnetwork/ckb-py-integration-test/blob/0660e3ff72090f0658d430d5ef4b83d427220dc7/test_cases/tx_pool_refactor/test_21_dao_pre_script_verification.py)；[交易编码辅助函数](https://github.com/nervosnetwork/ckb-py-integration-test/blob/0660e3ff72090f0658d430d5ef4b83d427220dc7/test_cases/tx_pool_refactor/dao_precheck/support.py)。8 项用例对应 9 个测试方法，DAOQ-04 分本地与正常 relay 两个方法。
 - 使用仓库已有 always_success 锁与节点内置 secp256k1、DAO 脚本。缺失签名是确定性脚本失败对照，所有数据由真实节点和链上交易生成。
 - 主节点在 `setup_class` 启动、`teardown_class` 停止并清理，固定 RPC/P2P 端口为 8120/8225。各用例分配独立输入 Cell；跨节点用例额外使用 8121/8226，并在用例结束时停止、清理第二节点。不额外归档节点日志，不支持此类测试使用相同端口并行运行。超时只表示观察未完成，不当作错误优先级或性能证据。

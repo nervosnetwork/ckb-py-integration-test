@@ -9,6 +9,7 @@ import copy
 import time
 from pathlib import Path
 
+import pytest
 import toml
 
 from framework.basic import CkbTest
@@ -30,6 +31,9 @@ from test_cases.tx_pool_refactor.dao_precheck.support import (
 )
 
 
+@pytest.mark.skip(
+    reason="Disabled until download/current includes nervosnetwork/ckb#5236"
+)
 class TestDaoPreScriptVerification(CkbTest):
     @classmethod
     def setup_class(cls):
