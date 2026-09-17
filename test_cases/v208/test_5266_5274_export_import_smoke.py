@@ -39,7 +39,7 @@ class TestV208ExportImportAndPackageSmoke(CkbTest):
             cls.source_node.clean()
 
     def _init_target_node(self, dec_dir, rpc_port, p2p_port):
-        target = self.CkbNode.init_dev_by_port(V208_RC0, dec_dir, rpc_port, p2p_port)
+        target = self.CkbNode.init_dev_by_port(self.CkbNodeConfigPath.CURRENT_TEST, dec_dir, rpc_port, p2p_port)
         target.prepare()
         target.start()
         assert target.getClient().get_tip_block_number() == 0
