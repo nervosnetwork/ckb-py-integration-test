@@ -18,7 +18,7 @@ class TestV209ReleaseSmoke(CkbTest):
     @classmethod
     def setup_class(cls):
         cls.source_node = cls.CkbNode.init_dev_by_port(
-            cls.CkbNodeConfigPath.CURRENT_TEST,
+            cls.CkbNodeConfigPath.v209,
             "v209/release_smoke/source",
             20934,
             20935,
@@ -52,7 +52,7 @@ class TestV209ReleaseSmoke(CkbTest):
 
     def _init_target_node(self):
         target = self.CkbNode.init_dev_by_port(
-            self.CkbNodeConfigPath.CURRENT_TEST,
+            self.CkbNodeConfigPath.v209,
             "v209/release_smoke/target",
             20936,
             20937,
