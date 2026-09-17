@@ -1,6 +1,7 @@
 """Clock-controlled tests; no nodes or sockets are started."""
 
 import pytest
+from unittest.mock import Mock
 
 from test_cases.tx_pool_refactor import test_20_verify_queue_regressions as queue_module
 
@@ -8,7 +9,7 @@ from test_cases.tx_pool_refactor import test_20_verify_queue_regressions as queu
 @pytest.fixture
 def waiter(monkeypatch):
     case = queue_module.TestVerifyQueueRegressions()
-    case.receiver = object()
+    case.receiver = Mock()
     now = [0.0]
     monkeypatch.setattr(queue_module.time, "monotonic", lambda: now[0])
     monkeypatch.setattr(
@@ -19,7 +20,10 @@ def waiter(monkeypatch):
     def configure(snapshots):
         index = [0]
 
-        def rpc(node, method, timeout):
+        def rpc(method, params, *, try_count, timeout, verbose):
+            assert params == []
+            assert try_count == 1
+            assert verbose is False
             calls.append((method, timeout))
             pending, queue_size, proposed, tip = snapshots[
                 min(index[0], len(snapshots) - 1)
@@ -33,7 +37,7 @@ def waiter(monkeypatch):
                 "tip_hash": tip,
             }
 
-        monkeypatch.setattr(case, "_call_rpc_quietly", rpc)
+        monkeypatch.setattr(case.receiver.getClient(), "call", rpc)
 
     return case, configure, calls, now
 
@@ -75,7 +79,7 @@ def test_rpc_errors_are_not_silently_ignored(waiter, monkeypatch):
     def error(*args, **kwargs):
         raise TimeoutError("RPC timeout")
 
-    monkeypatch.setattr(case, "_call_rpc_quietly", error)
+    monkeypatch.setattr(case.receiver.getClient(), "call", error)
     with pytest.raises(TimeoutError, match="RPC timeout"):
         case._wait_for_normal_queue_drain(["a"], "tip", timeout=1)
 
@@ -83,13 +87,13 @@ def test_rpc_errors_are_not_silently_ignored(waiter, monkeypatch):
 def test_rpc_result_after_deadline_is_not_a_pass(waiter, monkeypatch):
     case, configure, _, now = waiter
     configure([(["a"], 0, [], "tip")])
-    rpc = case._call_rpc_quietly
+    rpc = case.receiver.getClient().call
 
     def delayed(*args, **kwargs):
         result = rpc(*args, **kwargs)
         now[0] += 0.6
         return result
 
-    monkeypatch.setattr(case, "_call_rpc_quietly", delayed)
+    monkeypatch.setattr(case.receiver.getClient(), "call", delayed)
     with pytest.raises(AssertionError, match="did not drain"):
         case._wait_for_normal_queue_drain(["a"], "tip", timeout=1)

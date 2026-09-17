@@ -1,9 +1,7 @@
 import hashlib
-import json
 import shutil
 import threading
 import time
-import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -159,9 +157,7 @@ class TestVerifyQueueRegressions(CkbTest):
         tip_hash = self.receiver.getClient().get_tip_header()["hash"]
         started_at = time.monotonic()
         with ThreadPoolExecutor(max_workers=128) as executor:
-            tx_hashes = list(
-                executor.map(self._send_transaction_quietly, transactions)
-            )
+            tx_hashes = list(executor.map(self._send_transaction_quietly, transactions))
         submission_elapsed = time.monotonic() - started_at
         assert len(set(tx_hashes)) == self.NORMAL_TX_COUNT
         # Start the receiver deadline after submission, not while the CI runner
@@ -224,23 +220,14 @@ class TestVerifyQueueRegressions(CkbTest):
         self.did_pass = True
 
     def _send_transaction_quietly(self, transaction):
-        request = urllib.request.Request(
-            self.source.getClient().url,
-            data=json.dumps(
-                {
-                    "id": 42,
-                    "jsonrpc": "2.0",
-                    "method": "send_transaction",
-                    "params": [transaction, "passthrough"],
-                }
-            ).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+        tx_hash = self.source.getClient().call(
+            "send_transaction",
+            [transaction, "passthrough"],
+            try_count=1,
+            timeout=30,
+            verbose=False,
         )
-        with urllib.request.urlopen(request, timeout=30) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-        assert "error" not in payload, payload["error"]
-        tx_hash = payload.get("result")
-        assert isinstance(tx_hash, str) and tx_hash.startswith("0x"), payload
+        assert isinstance(tx_hash, str) and tx_hash.startswith("0x"), tx_hash
         return tx_hash
 
     def _sample_verify_queue(self):
@@ -258,20 +245,6 @@ class TestVerifyQueueRegressions(CkbTest):
         thread = threading.Thread(target=sample, daemon=True)
         thread.start()
         return samples, stop, thread
-
-    @staticmethod
-    def _call_rpc_quietly(node, method, timeout):
-        request = urllib.request.Request(
-            node.getClient().url,
-            data=json.dumps(
-                {"id": 42, "jsonrpc": "2.0", "method": method, "params": []}
-            ).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-        )
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-        assert "error" not in payload, payload
-        return payload["result"]
 
     def _wait_for_normal_queue_drain(self, tx_hashes, tip_hash, timeout):
         expected = set(tx_hashes)
@@ -291,8 +264,12 @@ class TestVerifyQueueRegressions(CkbTest):
                         f"missing={len(missing)}, queue_size={queue_size}, "
                         f"observed_peak={peak}, samples={samples}"
                     )
-                state[method] = self._call_rpc_quietly(
-                    self.receiver, method, timeout=min(self.RPC_TIMEOUT, remaining)
+                state[method] = self.receiver.getClient().call(
+                    method,
+                    [],
+                    try_count=1,
+                    timeout=min(self.RPC_TIMEOUT, remaining),
+                    verbose=False,
                 )
             pool, info = state["get_raw_tx_pool"], state["tx_pool_info"]
             assert info["tip_hash"] == tip_hash, "tip changed during normal queue test"
