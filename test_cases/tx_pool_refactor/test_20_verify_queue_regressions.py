@@ -30,6 +30,8 @@ class TestVerifyQueueRegressions(CkbTest):
 
     NORMAL_TX_COUNT = 1_000
     EXPENSIVE_TX_COUNT = 24
+    PRESSURE_TX_COUNT = 24
+    NORMAL_QUEUE_BACKLOG = 100
     NORMAL_WITNESS_BYTES = 10_000
     RECEIVER_MAX_VERIFY_CYCLES = 5_000_000
     CELL_CAPACITY = 100_000_000_000
@@ -149,17 +151,33 @@ class TestVerifyQueueRegressions(CkbTest):
         bounded time while RPC remains responsive. This is the production path
         that previously rescanned the entire queue for every pop (O(N^2)).
         """
-        transactions = [
+        normal_transactions = [
             self._build_normal_transaction(index)
             for index in range(self.NORMAL_TX_COUNT)
         ]
+        # Keep the general worker busy while the small-cycle worker receives
+        # the normal transactions, so the backlog precondition is observable.
+        pressure_transactions = [
+            self._build_expensive_transaction(
+                self.NORMAL_TX_COUNT + self.EXPENSIVE_TX_COUNT + index
+            )
+            for index in range(self.PRESSURE_TX_COUNT)
+        ]
+        transactions = pressure_transactions + normal_transactions
         queue_samples, stop_sampling, sampler = self._sample_verify_queue()
         started_at = time.monotonic()
         try:
             with ThreadPoolExecutor(max_workers=128) as executor:
-                tx_hashes = list(
-                    executor.map(self._send_transaction_quietly, transactions)
+                futures = [
+                    executor.submit(self._send_transaction_quietly, transaction)
+                    for transaction in transactions
+                ]
+                self._wait_for_queue_activity(
+                    queue_samples,
+                    timeout=30,
+                    minimum=self.NORMAL_QUEUE_BACKLOG,
                 )
+                tx_hashes = [future.result() for future in futures]
             self._wait_for_pending_transactions(tx_hashes, timeout=60)
             self._wait_verify_queue_empty(timeout=60)
         finally:
@@ -168,8 +186,8 @@ class TestVerifyQueueRegressions(CkbTest):
         elapsed = time.monotonic() - started_at
 
         assert not sampler.is_alive()
-        assert len(set(tx_hashes)) == self.NORMAL_TX_COUNT
-        assert max(queue_samples, default=0) >= 100, queue_samples[-20:]
+        assert len(set(tx_hashes)) == len(transactions)
+        assert max(queue_samples, default=0) >= self.NORMAL_QUEUE_BACKLOG
         assert elapsed < 60
         assert self.receiver.getClient().tx_pool_info()["verify_queue_size"] == "0x0"
         assert self.receiver.getClient().get_tip_header()["hash"].startswith("0x")
@@ -283,13 +301,16 @@ class TestVerifyQueueRegressions(CkbTest):
         raise AssertionError(f"source is missing {len(missing)} pending transactions")
 
     @staticmethod
-    def _wait_for_queue_activity(queue_samples, timeout):
+    def _wait_for_queue_activity(queue_samples, timeout, minimum=2):
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            if max(queue_samples, default=0) >= 2:
+            if max(queue_samples, default=0) >= minimum:
                 return
             time.sleep(0.01)
-        raise AssertionError("receiver verify queue never contained two transactions")
+        raise AssertionError(
+            "receiver verify queue peak did not reach "
+            f"{minimum}; peak={max(queue_samples, default=0)}"
+        )
 
     def _wait_verify_queue_empty(self, timeout):
         deadline = time.monotonic() + timeout
@@ -387,7 +408,9 @@ class TestVerifyQueueRegressions(CkbTest):
 
     @classmethod
     def _create_workload_cells(cls, source):
-        workload_count = cls.NORMAL_TX_COUNT + cls.EXPENSIVE_TX_COUNT
+        workload_count = (
+            cls.NORMAL_TX_COUNT + cls.EXPENSIVE_TX_COUNT + cls.PRESSURE_TX_COUNT
+        )
         change_capacity = (
             source["capacity"] - cls.CELL_CAPACITY * workload_count - cls.SPLIT_FEE
         )
