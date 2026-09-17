@@ -6,7 +6,7 @@ from framework.util import run_command
 
 class TestV209ReleaseSmoke(CkbTest):
     """
-    v0.209.0 binary regression coverage for @Xcodes-chain assigned PRs.
+    Current release binary regression coverage for @Xcodes-chain assigned PRs.
 
     Covered release items:
     - PR 5266: ckb import chain service lifecycle and export/import cleanup.
@@ -18,7 +18,7 @@ class TestV209ReleaseSmoke(CkbTest):
     @classmethod
     def setup_class(cls):
         cls.source_node = cls.CkbNode.init_dev_by_port(
-            cls.CkbNodeConfigPath.v209,
+            cls.CkbNodeConfigPath.CURRENT_TEST,
             "v209/release_smoke/source",
             20934,
             20935,
@@ -52,7 +52,7 @@ class TestV209ReleaseSmoke(CkbTest):
 
     def _init_target_node(self):
         target = self.CkbNode.init_dev_by_port(
-            self.CkbNodeConfigPath.v209,
+            self.CkbNodeConfigPath.CURRENT_TEST,
             "v209/release_smoke/target",
             20936,
             20937,
@@ -64,20 +64,20 @@ class TestV209ReleaseSmoke(CkbTest):
         target.rmLockFile()
         return target
 
-    def test_packaged_binary_reports_v209_release_version(self):
+    def test_packaged_binary_reports_v210_release_version(self):
         """
-        Check that download/current points at the v0.209.0 packaged binary.
+        Check that download/current points at the v0.210.0 packaged binary.
         """
         version = run_command(
             "cd {} && ./ckb --version".format(self.source_node.ckb_dir)
         )
 
-        assert version.startswith("ckb 0.209.0 ")
+        assert version.startswith("ckb 0.210.0 ")
         self.did_pass = True
 
     def test_release_package_init_and_export_genesis_smoke(self):
         """
-        Smoke the packaged v209 ckb binary with init and export from a fresh DB.
+        Smoke the packaged current CKB binary with init and export from a fresh DB.
         This mirrors the release-package smoke added for Windows in PR 5274.
         """
         smoke_dir = os.path.join(self.source_node.ckb_dir, "package_smoke")
