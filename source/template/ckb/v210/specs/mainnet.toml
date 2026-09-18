@@ -1,0 +1,69 @@
+name = "ckb"
+
+[genesis]
+version = 0
+parent_hash = "0x0000000000000000000000000000000000000000000000000000000000000000"
+timestamp = 1573852190812
+compact_target = 0x1a08a97e
+uncles_hash = "0x0000000000000000000000000000000000000000000000000000000000000000"
+nonce = "0x0"
+
+[genesis.genesis_cell]
+message = "lina 0x18e020f6b1237a3d06b75121f25a7efa0550e4b3f44f974822f471902424c104"
+
+[genesis.genesis_cell.lock]
+code_hash = "0x0000000000000000000000000000000000000000000000000000000000000000"
+args = "0x"
+hash_type = "data"
+
+# An array list paths to system cell files, which is absolute or relative to
+# the directory containing this config file.
+[[genesis.system_cells]]
+file = { bundled = "specs/cells/secp256k1_blake160_sighash_all" }
+create_type_id = true
+capacity = 100_000_0000_0000
+[[genesis.system_cells]]
+file = { bundled = "specs/cells/dao" }
+create_type_id = true
+capacity = 16_000_0000_0000
+[[genesis.system_cells]]
+file = { bundled = "specs/cells/secp256k1_data" }
+create_type_id = false
+capacity = 1_048_617_0000_0000
+[[genesis.system_cells]]
+file = { bundled = "specs/cells/secp256k1_blake160_multisig_all" }
+create_type_id = true
+capacity = 100_000_0000_0000
+
+[genesis.system_cells_lock]
+code_hash = "0x0000000000000000000000000000000000000000000000000000000000000000"
+args = "0x"
+hash_type = "data"
+
+# Dep group cells
+[[genesis.dep_groups]]
+name = "secp256k1_blake160_sighash_all"
+files = [
+    { bundled = "specs/cells/secp256k1_data" },
+    { bundled = "specs/cells/secp256k1_blake160_sighash_all" },
+]
+[[genesis.dep_groups]]
+name = "secp256k1_blake160_multisig_all"
+files = [
+    { bundled = "specs/cells/secp256k1_data" },
+    { bundled = "specs/cells/secp256k1_blake160_multisig_all" },
+]
+
+# For first 11 block
+[genesis.bootstrap_lock]
+code_hash = "0x0000000000000000000000000000000000000000000000000000000000000000"
+args = "0x"
+hash_type = "data"
+
+
+
+[params]
+genesis_epoch_length = 1743
+
+[pow]
+func = "Eaglesong"

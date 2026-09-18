@@ -44,7 +44,10 @@ test_cases := \
 	test_cases/ws \
 	test_cases/memory \
 	test_cases/ckb_command \
-	test_cases/poc
+	test_cases/poc \
+	test_cases/v208 \
+	test_cases/v209 \
+	test_cases/v210
 
 
 
