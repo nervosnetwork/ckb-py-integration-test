@@ -79,3 +79,8 @@ def test_current_node_configs_use_stable_download_path():
 
     assert {config.ckb_bin_path for config in current_configs} == {"download/current"}
     assert CkbNodeConfigPath.v206.ckb_bin_path == "download/0.206.0"
+    assert CkbNodeConfigPath.v209.ckb_bin_path == "download/0.209.0"
+    assert CkbNodeConfigPath.v210.ckb_bin_path == "download/0.210.0"
+    assert CkbNodeConfigPath.CURRENT_TEST.ckb_config_path.startswith(
+        "source/template/ckb/v210/"
+    )
