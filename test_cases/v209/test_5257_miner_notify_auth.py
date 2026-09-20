@@ -107,7 +107,7 @@ class TestV209MinerNotifyAuth(CkbTest):
 
         try:
             cls.node = cls.CkbNode.init_dev_by_port(
-                cls.CkbNodeConfigPath.v209,
+                cls.CkbNodeConfigPath.CURRENT_TEST,
                 "node/miner_notify_auth",
                 rpc_port,
                 p2p_port,
