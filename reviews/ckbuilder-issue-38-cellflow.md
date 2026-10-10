@@ -48,6 +48,8 @@ black --check test_cases/v210/test_38_cellflow_recovery_primitives.py
 
 新增用例结果为 `1 passed`；完整 V210 目录结果为 `3 passed, 1 warning in 42.07s`；Black 检查通过。warning 是本机 Python 链接 LibreSSL 时 urllib3 的已知环境提示，与测试行为无关。测试退出后节点与故障代理均已停止。
 
+此外使用 CI `prepare.sh` 固定安装的 `ckb-cli 0.205.0 (80efc21)` 驱动同一个 CKB 0.210.0 节点重跑新增用例，结果仍为 `1 passed`，未发现 CLI 构造交易路径的版本兼容问题。
+
 本轮未发现 CKB 0.210.0 在上述链上恢复原语中的新增缺陷。CellFlow 仓库的可复现性问题与缺失的 Testnet evidence bundle 已作为项目方待补充项记录，不作为 CKB 节点 bug。
 
 ## 待项目方补充
