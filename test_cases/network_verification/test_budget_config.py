@@ -3,7 +3,6 @@
 import socket
 import subprocess
 import time
-from contextlib import contextmanager
 from pathlib import Path
 
 import toml
@@ -59,9 +58,48 @@ class TestTxPoolConfigCompatibility(CkbTest):
         path.write_text(toml.dumps(config))
         return node, config
 
-    @contextmanager
-    def _running_node(self, name, tx_pool_fields, binary_dir=None):
-        node, config = self._prepared_node(name, tx_pool_fields, binary_dir)
+    def _rejected_config(self, field, binary_dir):
+        node, _ = self._prepared_node(
+            f"invalid_{field}",
+            {field: 1},
+            binary_dir,
+        )
+        try:
+            result = subprocess.run(
+                [node.ckb_bin_path, "run", "--indexer", "--skip-spec-check"],
+                cwd=node.ckb_dir,
+                text=True,
+                capture_output=True,
+                timeout=10,
+                check=False,
+            )
+            output = result.stdout + result.stderr
+            assert result.returncode != 0, f"{field} unexpectedly started node"
+            assert f"unknown field `{field}`" in output, output[-1500:]
+            print(f"production rejects {field}: exit={result.returncode}")
+        finally:
+            node.clean()
+
+    # TEST-MAP: VT2-32
+    # TEST-EVIDENCE-BEGIN: VT2-32
+    # Evidence | Case: VT2-32 (covered)
+    # Evidence | Setup: Use PRODUCTION_BIN_DIR (default project-relative download/production) with its production CKB/CLI; normal configuration has no budget fields. No manifest or executable-hash comparison is performed. Preparation, process launch, RPC readiness and try/finally cleanup are now explicit in this test method; no custom contextmanager is involved.
+    # Evidence | Trigger: Start ordinary config and query tx_pool_info; separately run production with each of three internal fields.
+    # Evidence | Observe: Baseline RPC tip0 available; each field causes nonzero process exit and exact unknown-field diagnostic.
+    # Evidence | Assert: assert info["tip_number"] == "0x0"
+    # Evidence | Assert: raise AssertionError(
+    # Evidence |                             "node did not expose tx_pool_info within 20 seconds"
+    # Evidence |                         )
+    # Evidence | Assert: assert field not in config["tx_pool"]
+    # Evidence | Assert: assert result.returncode != 0, f"{field} unexpectedly started node"
+    # Evidence | Assert: assert f"unknown field `{field}`" in output, output[-1500:]
+    # Evidence | Limit: Fields loop within one method. Binary hash/distinctness/preflight and source-revision attestation are no longer suite checks; caller supplies the two builds and their provenance. Actual production/test configuration behavior remains asserted.
+    # Evidence | Limit: Static coverage only; this scoped review does not establish a current focused or real-node execution pass.
+    # TEST-EVIDENCE-END: VT2-32
+    def test_production_rejects_test_only_budget_fields(self):
+        production = PRODUCTION_BIN_DIR
+        # 1. 准备生产构建的默认配置；每个配置场景独立使用节点目录。
+        node, config = self._prepared_node("production_defaults", {}, production)
         log_path = Path(node.ckb_dir) / "config-run.log"
         try:
             with log_path.open("w") as log:
@@ -91,12 +129,20 @@ class TestTxPoolConfigCompatibility(CkbTest):
                             time.sleep(0.25)
                             continue
                         assert info["tip_number"] == "0x0"
-                        yield node, config
-                        return
-                    raise AssertionError(
-                        "node did not expose tx_pool_info within 20 seconds"
-                    )
+                        break
+                    else:
+                        raise AssertionError(
+                            "node did not expose tx_pool_info within 20 seconds"
+                        )
+                    # 2. 启动并等待 RPC 就绪后，验证生产默认配置不含测试字段。
+                    for field in (
+                        "max_tx_verify_time_ms",
+                        "min_tx_verify_time_ms",
+                        "cycles_per_ms",
+                    ):
+                        assert field not in config["tx_pool"]
                 finally:
+                    # 3. 无论断言是否通过，先结束进程，再关闭日志并清理目录。
                     if process.poll() is None:
                         process.terminate()
                         try:
@@ -106,58 +152,6 @@ class TestTxPoolConfigCompatibility(CkbTest):
                             process.wait(timeout=10)
         finally:
             node.clean()
-
-    def _rejected_config(self, field, binary_dir):
-        node, _ = self._prepared_node(
-            f"invalid_{field}",
-            {field: 1},
-            binary_dir,
-        )
-        try:
-            result = subprocess.run(
-                [node.ckb_bin_path, "run", "--indexer", "--skip-spec-check"],
-                cwd=node.ckb_dir,
-                text=True,
-                capture_output=True,
-                timeout=10,
-                check=False,
-            )
-            output = result.stdout + result.stderr
-            assert result.returncode != 0, f"{field} unexpectedly started node"
-            assert f"unknown field `{field}`" in output, output[-1500:]
-            print(f"production rejects {field}: exit={result.returncode}")
-        finally:
-            node.clean()
-
-    # TEST-MAP: VT2-32
-    # TEST-EVIDENCE-BEGIN: VT2-32
-    # Evidence | Case: VT2-32 (covered)
-    # Evidence | Setup: Use PRODUCTION_BIN_DIR (default project-relative download/production) with its production CKB/CLI; normal configuration has no budget fields. No manifest or executable-hash comparison is performed.
-    # Evidence | Trigger: Start ordinary config and query tx_pool_info; separately run production with each of three internal fields.
-    # Evidence | Observe: Baseline RPC tip0 available; each field causes nonzero process exit and exact unknown-field diagnostic.
-    # Evidence | Assert: assert info["tip_number"] == "0x0"
-    # Evidence | Assert: raise AssertionError(
-    # Evidence |                         "node did not expose tx_pool_info within 20 seconds"
-    # Evidence |                     )
-    # Evidence | Assert: assert field not in config["tx_pool"]
-    # Evidence | Assert: assert result.returncode != 0, f"{field} unexpectedly started node"
-    # Evidence | Assert: assert f"unknown field `{field}`" in output, output[-1500:]
-    # Evidence | Limit: Fields loop within one method. Binary hash/distinctness/preflight and source-revision attestation are no longer suite checks; caller supplies the two builds and their provenance. Actual production/test configuration behavior remains asserted.
-    # Evidence | Limit: Coverage is static; this native-pytest review does not establish current real-node per-Case outcomes.
-    # TEST-EVIDENCE-END: VT2-32
-    def test_production_rejects_test_only_budget_fields(self):
-        production = PRODUCTION_BIN_DIR
-        with self._running_node(
-            "production_defaults",
-            {},
-            production,
-        ) as (_, config):
-            for field in (
-                "max_tx_verify_time_ms",
-                "min_tx_verify_time_ms",
-                "cycles_per_ms",
-            ):
-                assert field not in config["tx_pool"]
         for field in (
             "max_tx_verify_time_ms",
             "min_tx_verify_time_ms",
@@ -169,7 +163,7 @@ class TestTxPoolConfigCompatibility(CkbTest):
     # TEST-MAP: VT2-33
     # TEST-EVIDENCE-BEGIN: VT2-33
     # Evidence | Case: VT2-33 (covered)
-    # Evidence | Setup: Existing CURRENT_TEST selects download/current test-feature CKB/CLI; separate node directories/ports for default,1,12000,0,-1,4294967296 plus two unexposed fields.
+    # Evidence | Setup: Existing CURRENT_TEST selects download/current test-feature CKB/CLI; separate node directories/ports for default,1,12000,0,-1,4294967296 plus two unexposed fields. Preparation, process launch, RPC readiness and try/finally cleanup are now explicit in this test method; no custom contextmanager is involved.
     # Evidence | Trigger: Actual startup for allowed values; bounded subprocess rejection for invalid values and fields.
     # Evidence | Observe: Allowed RPC readiness; invalid nonzero exits identify field/range and closed RPC port; unsupported fields report unknown-field.
     # Evidence | Assert: assert info["tip_number"] == "0x0"
@@ -189,7 +183,7 @@ class TestTxPoolConfigCompatibility(CkbTest):
     # Evidence | Assert: assert result.returncode != 0, f"{field} unexpectedly started node"
     # Evidence | Assert: assert f"unknown field `{field}`" in output, output[-1500:]
     # Evidence | Limit: Both selector methods must run; neither alone completes the Case.
-    # Evidence | Limit: Coverage is static; this native-pytest review does not establish current real-node per-Case outcomes.
+    # Evidence | Limit: Static coverage only; this scoped review does not establish a current focused or real-node execution pass.
     # Evidence | Limit: The budget-change control now uses the same verified cold process boundary as persistence/reorg tests.
     # TEST-EVIDENCE-END: VT2-33
     def test_budget_configuration_bounds(self):
@@ -199,8 +193,53 @@ class TestTxPoolConfigCompatibility(CkbTest):
             ("minimum_budget", {"max_tx_verify_time_ms": 1}),
             ("large_budget", {"max_tx_verify_time_ms": 12_000}),
         ):
-            with self._running_node(label, fields) as (node, _):
-                assert node.getClient().tx_pool_info()["pending"] == "0x0"
+            # 每个允许值都重新准备节点，执行后立即停止和清理。
+            node, _ = self._prepared_node(label, fields)
+            log_path = Path(node.ckb_dir) / "config-run.log"
+            try:
+                with log_path.open("w") as log:
+                    process = subprocess.Popen(
+                        [node.ckb_bin_path, "run", "--indexer", "--skip-spec-check"],
+                        cwd=node.ckb_dir,
+                        stdout=log,
+                        stderr=subprocess.STDOUT,
+                    )
+                    try:
+                        deadline = time.monotonic() + 20
+                        while time.monotonic() < deadline:
+                            if process.poll() is not None:
+                                raise AssertionError(
+                                    f"node exited {process.returncode}: "
+                                    f"{log_path.read_text(errors='replace')[-1500:]}"
+                                )
+                            try:
+                                info = node.getClient().call(
+                                    "tx_pool_info",
+                                    [],
+                                    try_count=1,
+                                    timeout=1,
+                                    verbose=False,
+                                )
+                            except Exception:
+                                time.sleep(0.25)
+                                continue
+                            assert info["tip_number"] == "0x0"
+                            break
+                        else:
+                            raise AssertionError(
+                                "node did not expose tx_pool_info within 20 seconds"
+                            )
+                        assert node.getClient().tx_pool_info()["pending"] == "0x0"
+                    finally:
+                        if process.poll() is None:
+                            process.terminate()
+                            try:
+                                process.wait(timeout=10)
+                            except subprocess.TimeoutExpired:
+                                process.kill()
+                                process.wait(timeout=10)
+            finally:
+                node.clean()
         for value in (0, -1, 4_294_967_296):
             node, _ = self._prepared_node(
                 f"invalid_budget_{value}", {"max_tx_verify_time_ms": value}
