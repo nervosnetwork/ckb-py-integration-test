@@ -3,9 +3,7 @@
 Only ordinary node RPC and node-to-node relay are used, not a synthetic P2P peer.
 """
 
-import copy
 import hashlib
-import json
 import os
 import shutil
 import socket
@@ -53,20 +51,6 @@ def script_hash(path):
     )
 
 
-def set_budget(node, cap):
-    path = Path(node.ckb_toml_path)
-    config = toml.loads(path.read_text())
-    config["tx_pool"].update(
-        max_tx_verify_time_ms=cap,
-        max_tx_verify_cycles=1_000_000_000,
-        keep_rejected_tx_hashes_days=1,
-        keep_rejected_tx_hashes_count=1000,
-    )
-    config["logger"]["filter"] = "info,ckb_tx_pool=debug,ckb_relay=trace"
-    config["network"]["connect_outbound_interval_secs"] = 0
-    path.write_text(toml.dumps(config))
-
-
 def _node_process_id(node):
     port = node.rpcUrl.rsplit(":", 1)[1]
     result = subprocess.run(
@@ -103,7 +87,7 @@ def _process_exists(pid):
     return True
 
 
-def restart(node, cap=None):
+def restart_and_assert_new_process(node, cap=None):
     """Prove a cold process boundary, rather than treating a sleep as shutdown."""
     previous = _node_process_id(node)
     assert previous is not None
@@ -113,7 +97,17 @@ def restart(node, cap=None):
     )
     assert _node_process_id(node) is None
     if cap is not None:
-        set_budget(node, cap)
+        path = Path(node.ckb_toml_path)
+        config = toml.loads(path.read_text())
+        config["tx_pool"].update(
+            max_tx_verify_time_ms=cap,
+            max_tx_verify_cycles=1_000_000_000,
+            keep_rejected_tx_hashes_days=1,
+            keep_rejected_tx_hashes_count=1000,
+        )
+        config["logger"]["filter"] = "info,ckb_tx_pool=debug,ckb_relay=trace"
+        config["network"]["connect_outbound_interval_secs"] = 0
+        path.write_text(toml.dumps(config))
     node.start()
     current = wait_for(lambda: _node_process_id(node), "restarted node listening", 20)
     assert current != previous, (previous, current)
@@ -178,7 +172,7 @@ def sync_blocks(source, destination, first_height, last_height):
     raise AssertionError(f"block receiver did not reach {expected_tip}")
 
 
-def transaction(node, *, cell=0, slow=False, output_capacity=None):
+def build_transaction(node, *, cell=0, slow=False, output_capacity=None):
     client = node.getClient()
     genesis = client.get_block_by_number("0x0")["transactions"][0]
     fast_hash, slow_hash = (
@@ -244,27 +238,29 @@ def transaction(node, *, cell=0, slow=False, output_capacity=None):
     }
 
 
-def owners(client):
+def pool_transactions(client):
     raw = client.get_raw_tx_pool(True)
     return {**raw["pending"], **raw["proposed"]}
 
 
-def accepted(node, tx_hash, tx, cycles):
+def assert_pool_transaction(node, tx_hash, tx, cycles):
     client = node.getClient()
-    wait_for(lambda: tx_hash in owners(client), f"pool admission of {tx_hash}")
+    wait_for(
+        lambda: tx_hash in pool_transactions(client), f"pool admission of {tx_hash}"
+    )
     response = client.get_transaction(tx_hash)
     assert response["tx_status"]["status"] in ("pending", "proposed"), response
     body = dict(response["transaction"])
     assert body.pop("hash") == tx_hash
     assert body == tx
     assert int(response["cycles"], 16) == cycles
-    assert int(owners(client)[tx_hash]["cycles"], 16) == cycles
+    assert int(pool_transactions(client)[tx_hash]["cycles"], 16) == cycles
     return response
 
 
 def remote_refusals(node, tx_hash):
     # The current product has entered after_process; this line precedes some
-    # side effects. retry_slow adds a fresh protocol-request barrier when needed.
+    # side effects. Tests add a fresh protocol-request barrier before state checks.
     return [
         line
         for line in (Path(node.ckb_dir) / "node.log")
@@ -276,38 +272,19 @@ def remote_refusals(node, tx_hash):
     ]
 
 
-def refused(node, tx_hash, count=1):
+def assert_remote_budget_refusal(node, tx_hash, count=1):
     wait_for(
         lambda: len(remote_refusals(node, tx_hash)) >= count,
         f"processed remote CPU-budget refusal {count} for {tx_hash}",
         45,
     )
     client = node.getClient()
-    assert tx_hash not in owners(client)
+    assert tx_hash not in pool_transactions(client)
     result = client.get_transaction(tx_hash)
     assert result["tx_status"]["status"] == "unknown", result
     assert result["transaction"] is None
     assert client.get_banned_addresses() == []
     assert node.get_connected_count() >= 1
-
-
-def connect(source, destination):
-    source.connected(destination)
-    wait_for(
-        lambda: any(
-            peer["node_id"] == source.get_peer_id()
-            for peer in destination.getClient().get_peers()
-        ),
-        "expected peer connection",
-    )
-
-
-def relay_slow(source, destination, tx):
-    connect(source, destination)
-    tx_hash = source.getClient().send_transaction(tx)
-    accepted(source, tx_hash, tx, BUDGET_CYCLES)
-    refused(destination, tx_hash)
-    return tx_hash
 
 
 def transaction_requests(node, tx_hash):
@@ -320,18 +297,3 @@ def transaction_requests(node, tx_hash):
         .splitlines()
         if "request transactions(" in line and tx_hash[2:] in line
     ]
-
-
-def retry_slow(source, destination, tx, tx_hash):
-    """Fresh peer requests the same bytes after the first refusal released known."""
-    refusals = len(remote_refusals(destination, tx_hash))
-    requests_before = len(transaction_requests(source, tx_hash))
-    assert refusals >= 1
-    connect(source, destination)
-    assert source.getClient().send_transaction(tx) == tx_hash
-    wait_for(
-        lambda: len(transaction_requests(source, tx_hash)) > requests_before,
-        f"fresh GetRelayTransactions for {tx_hash}",
-        45,
-    )
-    refused(destination, tx_hash, refusals + 1)

@@ -1,8 +1,6 @@
 """A successful script proof cannot waive fresh since checks."""
 
 import json
-import os
-import subprocess
 import tempfile
 from pathlib import Path
 
@@ -43,52 +41,13 @@ class TestCachedContext(CkbTest):
         workload.save_node_logs(cls.node)
         cls.node.clean()
 
-    def teardown_method(self, method):
-        # The focused pytest log is the retained execution record.
-        pass
-
-    def _since_transaction(self, client, split_hash, key, since_height):
-        with tempfile.TemporaryDirectory(prefix="budget-cache-since-") as directory:
-            tx_file = str(Path(directory) / "since.json")
-            address = self.Ckb_cli.util_key_info_by_private_key(key)["address"][
-                "testnet"
-            ]
-            self.Ckb_cli.tx_init(tx_file, client.url)
-            self.Ckb_cli.tx_add_multisig_config(address, tx_file, client.url)
-            self.Ckb_cli.tx_add_input(split_hash, 0, tx_file, client.url)
-            cell = client.get_transaction(split_hash)["transaction"]["outputs"][0]
-            self.Ckb_cli.tx_add_type_out_put(
-                cell["lock"]["code_hash"],
-                cell["lock"]["hash_type"],
-                cell["lock"]["args"],
-                hex(int(cell["capacity"], 16) - 2000),
-                "0x",
-                tx_file,
-                False,
-            )
-            with open(tx_file, encoding="utf-8") as stream:
-                document = json.load(stream)
-            document["transaction"]["inputs"][0]["since"] = hex(since_height)
-            with open(tx_file, "w", encoding="utf-8") as stream:
-                json.dump(document, stream)
-            signature = self.Ckb_cli.tx_sign_inputs(key, tx_file, client.url)[0]
-            self.Ckb_cli.tx_add_signature(
-                signature["lock-arg"],
-                signature["signature"],
-                tx_file,
-                client.url,
-            )
-            tx = self.Tx.build_tx_info(tx_file)
-            assert tx["inputs"][0]["since"] == hex(since_height)
-            return tx
-
     # TEST-MAP: VT2-52
     # TEST-EVIDENCE-BEGIN: VT2-52
     # Evidence | Case: VT2-52 (covered)
     # Evidence | Setup: Signed absolute-height-since transaction first accepted mature, removed, then chain truncated to still-confirmed funding height. The independent node and initial 30-block chain are prepared in TestCachedContext.setup_class. node.prepare uses existing CURRENT_TEST/download/current directly; the redundant manifest-selected binary copy is removed.
     # Evidence | Trigger: Both RPC methods reject same bytes while immature; mine back to mature height, preview and resubmit unchanged tx.
     # Evidence | Observe: Immature from both endpoints/empty pool; later equal cycles, same hash and membership.
-    # Evidence | Assert: assert tx["inputs"][0]["since"] == hex(since_height)
+    # Evidence | Assert: assert tx["inputs"][0]["since"] == hex(high_height)
     # Evidence | Assert: assert client.get_block_hash(hex(low_height)) == low_hash
     # Evidence | Assert: assert client.get_tip_block_number() == high_height
     # Evidence | Assert: assert high_cycles > 0
@@ -108,7 +67,7 @@ class TestCachedContext(CkbTest):
     # Evidence |             client.get_raw_tx_pool(False)["proposed"]
     # Evidence |         )
     # Evidence | Limit: Extra warm-script/truncate control; no private cache-hit count claimed.
-    # Evidence | Limit: Coverage is static; this native-pytest review does not establish current real-node per-Case outcomes.
+    # Evidence | Limit: Static coverage only; this readability review does not establish current real-node per-Case outcomes.
     # TEST-EVIDENCE-END: VT2-52
     def test_cached_script_proof_does_not_skip_since_after_truncate(self):
         """
@@ -144,7 +103,35 @@ class TestCachedContext(CkbTest):
         high_height = low_height + 6
         self.Miner.make_tip_height_number(node, high_height)
         assert client.get_tip_block_number() == high_height
-        tx = self._since_transaction(client, split, key, high_height)
+        with tempfile.TemporaryDirectory(prefix="budget-cache-since-") as directory:
+            tx_file = str(Path(directory) / "since.json")
+            address = self.Ckb_cli.util_key_info_by_private_key(key)["address"][
+                "testnet"
+            ]
+            self.Ckb_cli.tx_init(tx_file, client.url)
+            self.Ckb_cli.tx_add_multisig_config(address, tx_file, client.url)
+            self.Ckb_cli.tx_add_input(split, 0, tx_file, client.url)
+            cell = client.get_transaction(split)["transaction"]["outputs"][0]
+            self.Ckb_cli.tx_add_type_out_put(
+                cell["lock"]["code_hash"],
+                cell["lock"]["hash_type"],
+                cell["lock"]["args"],
+                hex(int(cell["capacity"], 16) - 2000),
+                "0x",
+                tx_file,
+                False,
+            )
+            with open(tx_file, encoding="utf-8") as stream:
+                document = json.load(stream)
+            document["transaction"]["inputs"][0]["since"] = hex(high_height)
+            with open(tx_file, "w", encoding="utf-8") as stream:
+                json.dump(document, stream)
+            signature = self.Ckb_cli.tx_sign_inputs(key, tx_file, client.url)[0]
+            self.Ckb_cli.tx_add_signature(
+                signature["lock-arg"], signature["signature"], tx_file, client.url
+            )
+            tx = self.Tx.build_tx_info(tx_file)
+            assert tx["inputs"][0]["since"] == hex(high_height)
         accepted_hash = client.send_transaction(tx)
         high_entry = client.get_raw_tx_pool(True)["pending"][accepted_hash]
         high_cycles = int(high_entry["cycles"], 16)

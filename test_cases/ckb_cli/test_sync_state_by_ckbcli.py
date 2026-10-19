@@ -191,9 +191,6 @@ class TestSyncProgress(CkbTest):
             workload.save_node_logs(node)
             node.clean()
 
-    def teardown_method(self, method):
-        pass
-
     # TEST-MAP: VT2-39
     # TEST-EVIDENCE-BEGIN: VT2-39
     # Evidence | Case: VT2-39 (covered)
@@ -226,7 +223,7 @@ class TestSyncProgress(CkbTest):
     # Evidence |             ), (state, header)
     # Evidence | Limit: Sequential public progress regression, not deterministic private callback/reset race.
     # Evidence | Limit: Three stable samples span finite0.2s; no continued source mining after convergence.
-    # Evidence | Limit: Coverage is static; this native-pytest review does not establish current real-node per-Case outcomes.
+    # Evidence | Limit: Static coverage only; this readability review does not establish current real-node per-Case outcomes.
     # TEST-EVIDENCE-END: VT2-39
     def test_invalid_block_then_valid_sync_preserves_progress_floor(self):
         """
@@ -275,7 +272,14 @@ class TestSyncProgress(CkbTest):
         # A distinct healthy source resumes ordinary synchronization.
         self.Miner.make_tip_height_number(healthy, 32)
         expected_tip = healthy.getClient().get_tip_header()["hash"]
-        workload.connect(healthy, receiver)
+        healthy.connected(receiver)
+        workload.wait_for(
+            lambda: any(
+                peer["node_id"] == healthy.get_peer_id()
+                for peer in receiver.getClient().get_peers()
+            ),
+            "expected peer connection",
+        )
         workload.wait_for(
             lambda: client.get_tip_header()["hash"] == expected_tip
             and client.tx_pool_info()["tip_hash"] == expected_tip,

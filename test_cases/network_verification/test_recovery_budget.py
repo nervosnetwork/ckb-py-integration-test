@@ -124,14 +124,11 @@ class TestRecoveryBudget(CkbTest):
             workload.save_node_logs(node)
             node.clean()
 
-    def teardown_method(self, method):
-        pass
-
     # TEST-MAP: VT2-10
     # TEST-EVIDENCE-BEGIN: VT2-10
     # Evidence | Case: VT2-10 (covered)
     # Evidence | Setup: Slow transaction first network-refused, then locally mined on old branch; separate valid fork excludes it and is two blocks longer; recovery cap1e9 exceeds transaction cycles. Fresh class-owned nodes are explicitly configured and started in TestRecoveryBudget.setup_class; each class has one independent scenario.
-    # Evidence | Trigger: Use workload.restart at cap1 and require verified old-PID disappearance/no listener followed by a distinct owned listening PID; then deliver the better fork as full blocks without a connected peer, observe detached transaction and re-mine.
+    # Evidence | Trigger: Use workload.restart_and_assert_new_process at cap1 and require verified old-PID disappearance/no listener followed by a distinct owned listening PID; then deliver the better fork as full blocks without a connected peer, observe detached transaction and re-mine.
     # Evidence | Observe: Verified cold process boundary, preserved old chain/empty pool/no peer, canonical switch to new fork, exact recovered transaction body/cycles and final commitment.
     # Evidence | Assert: assert client.send_transaction(tx) == tx_hash
     # Evidence | Assert: assert other.get_transaction(tx_hash)["tx_status"]["status"] == "unknown"
@@ -146,8 +143,8 @@ class TestRecoveryBudget(CkbTest):
     # Evidence | Assert: assert body.pop("hash") == tx_hash
     # Evidence | Assert: assert body == tx
     # Evidence | Assert: assert int(response["cycles"], 16) == cycles
-    # Evidence | Assert: assert int(owners(client)[tx_hash]["cycles"], 16) == cycles
-    # Evidence | Assert: workload.restart(receiver)
+    # Evidence | Assert: assert int(pool_transactions(client)[tx_hash]["cycles"], 16) == cycles
+    # Evidence | Assert: workload.restart_and_assert_new_process(receiver)
     # Evidence | Assert: assert result.returncode in (0, 1), result.stderr
     # Evidence | Assert: assert len(pids) == 1, pids
     # Evidence | Assert: assert paths == [Path(node.ckb_dir).resolve()], (pid, paths, node.ckb_dir)
@@ -159,7 +156,7 @@ class TestRecoveryBudget(CkbTest):
     # Evidence | Assert: current = wait_for(lambda: _node_process_id(node), "restarted node listening", 20)
     # Evidence | Assert: assert current != previous, (previous, current)
     # Evidence | Limit: Coldness is established by old-PID disappearance and distinct owned new listener; no private VM/cache counter is claimed. lsof/OS process visibility is an explicit local prerequisite.
-    # Evidence | Limit: Coverage is static; this native-pytest review does not establish current real-node per-Case outcomes.
+    # Evidence | Limit: Static coverage only; this readability review does not establish current real-node per-Case outcomes.
     # TEST-EVIDENCE-END: VT2-10
     def test_detached_transaction_recovers_after_restart_under_one_ms_cap(self):
         """
@@ -171,8 +168,18 @@ class TestRecoveryBudget(CkbTest):
         fork = self.fork
         source = self.source
         client, other = receiver.getClient(), fork.getClient()
-        tx = workload.transaction(source, slow=True)
-        tx_hash = workload.relay_slow(source, receiver, tx)
+        tx = workload.build_transaction(source, slow=True)
+        source.connected(receiver)
+        workload.wait_for(
+            lambda: any(
+                peer["node_id"] == source.get_peer_id()
+                for peer in receiver.getClient().get_peers()
+            ),
+            "expected peer connection",
+        )
+        tx_hash = source.getClient().send_transaction(tx)
+        workload.assert_pool_transaction(source, tx_hash, tx, workload.BUDGET_CYCLES)
+        workload.assert_remote_budget_refusal(receiver, tx_hash)
         client.remove_node(source.get_peer_id())
         workload.wait_for(
             lambda: receiver.get_connected_count() == 0, "isolate reorg fixture"
@@ -187,14 +194,14 @@ class TestRecoveryBudget(CkbTest):
         self.Miner.make_tip_height_number(fork, old_height + 2)
         new_tip = other.get_tip_header()["hash"]
         assert new_tip != old_tip
-        workload.restart(receiver)
+        workload.restart_and_assert_new_process(receiver)
         assert client.get_tip_header()["hash"] == old_tip
         assert client.get_raw_tx_pool(False) == {"pending": [], "proposed": []}
         assert receiver.get_connected_count() == 0
         # Full blocks only: no peer can inject the detached transaction.
         workload.sync_blocks(fork, receiver, 31, old_height + 2)
         assert client.get_tip_header()["hash"] == new_tip
-        workload.accepted(receiver, tx_hash, tx, workload.BUDGET_CYCLES)
+        workload.assert_pool_transaction(receiver, tx_hash, tx, workload.BUDGET_CYCLES)
         assert receiver.get_connected_count() == 0
         committed = self.Miner.miner_until_tx_committed(receiver, tx_hash)
         assert committed["tx_status"]["status"] == "committed"

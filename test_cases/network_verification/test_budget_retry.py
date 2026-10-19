@@ -124,21 +124,18 @@ class TestTimeBudgetRetry(CkbTest):
             workload.save_node_logs(node)
             node.clean()
 
-    def teardown_method(self, method):
-        pass
-
     # TEST-MAP: VT2-33
     # TEST-EVIDENCE-BEGIN: VT2-33
     # Evidence | Case: VT2-33 (covered)
     # Evidence | Setup: Valid fixed-cycle slow transaction; initial low-cap receiver has real hash-specific refusal and unknown/no-ban state. Fresh class-owned nodes are explicitly configured and started in TestTimeBudgetRetry.setup_class; each class has one independent scenario.
-    # Evidence | Trigger: Use workload.restart(cap=12000): old owned PID must disappear before updating cap; a distinct owned listener is required before identical transaction bytes are relayed through another ordinary peer.
+    # Evidence | Trigger: Use workload.restart_and_assert_new_process(cap=12000): old owned PID must disappear before updating cap; a distinct owned listener is required before identical transaction bytes are relayed through another ordinary peer.
     # Evidence | Observe: At1ms refused; at12000ms same hash/body/cycles admitted over network with no ban.
     # Evidence | Assert: wait_for(
     # Evidence |         lambda: len(remote_refusals(node, tx_hash)) >= count,
     # Evidence |         f"processed remote CPU-budget refusal {count} for {tx_hash}",
     # Evidence |         45,
     # Evidence |     )
-    # Evidence | Assert: assert tx_hash not in owners(client)
+    # Evidence | Assert: assert tx_hash not in pool_transactions(client)
     # Evidence | Assert: assert result["tx_status"]["status"] == "unknown", result
     # Evidence | Assert: assert result["transaction"] is None
     # Evidence | Assert: assert client.get_banned_addresses() == []
@@ -149,8 +146,8 @@ class TestTimeBudgetRetry(CkbTest):
     # Evidence | Assert: assert body.pop("hash") == tx_hash
     # Evidence | Assert: assert body == tx
     # Evidence | Assert: assert int(response["cycles"], 16) == cycles
-    # Evidence | Assert: assert int(owners(client)[tx_hash]["cycles"], 16) == cycles
-    # Evidence | Assert: workload.restart(receiver, cap=12_000)
+    # Evidence | Assert: assert int(pool_transactions(client)[tx_hash]["cycles"], 16) == cycles
+    # Evidence | Assert: workload.restart_and_assert_new_process(receiver, cap=12_000)
     # Evidence | Assert: assert result.returncode in (0, 1), result.stderr
     # Evidence | Assert: assert len(pids) == 1, pids
     # Evidence | Assert: assert paths == [Path(node.ckb_dir).resolve()], (pid, paths, node.ckb_dir)
@@ -162,7 +159,7 @@ class TestTimeBudgetRetry(CkbTest):
     # Evidence | Assert: current = wait_for(lambda: _node_process_id(node), "restarted node listening", 20)
     # Evidence | Assert: assert current != previous, (previous, current)
     # Evidence | Limit: Both selector methods must run; neither alone completes the Case.
-    # Evidence | Limit: Coverage is static; this native-pytest review does not establish current real-node per-Case outcomes.
+    # Evidence | Limit: Static coverage only; this readability review does not establish current real-node per-Case outcomes.
     # Evidence | Limit: The budget-change control now uses the same verified cold process boundary as persistence/reorg tests.
     # TEST-EVIDENCE-END: VT2-33
     def test_network_budget_accepts_same_transaction_after_limit_increase(self):
@@ -174,11 +171,28 @@ class TestTimeBudgetRetry(CkbTest):
         source = self.source
         receiver = self.receiver
         other = self.other
-        tx = workload.transaction(source, slow=True)
-        tx_hash = workload.relay_slow(source, receiver, tx)
-        workload.restart(receiver, cap=12_000)
-        workload.connect(other, receiver)
+        tx = workload.build_transaction(source, slow=True)
+        source.connected(receiver)
+        workload.wait_for(
+            lambda: any(
+                peer["node_id"] == source.get_peer_id()
+                for peer in receiver.getClient().get_peers()
+            ),
+            "expected peer connection",
+        )
+        tx_hash = source.getClient().send_transaction(tx)
+        workload.assert_pool_transaction(source, tx_hash, tx, workload.BUDGET_CYCLES)
+        workload.assert_remote_budget_refusal(receiver, tx_hash)
+        workload.restart_and_assert_new_process(receiver, cap=12_000)
+        other.connected(receiver)
+        workload.wait_for(
+            lambda: any(
+                peer["node_id"] == other.get_peer_id()
+                for peer in receiver.getClient().get_peers()
+            ),
+            "expected peer connection",
+        )
         assert other.getClient().send_transaction(tx) == tx_hash
-        workload.accepted(receiver, tx_hash, tx, workload.BUDGET_CYCLES)
+        workload.assert_pool_transaction(receiver, tx_hash, tx, workload.BUDGET_CYCLES)
         assert receiver.getClient().get_banned_addresses() == []
         self.did_pass = True

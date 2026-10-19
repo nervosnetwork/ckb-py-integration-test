@@ -311,9 +311,6 @@ class TestVmVerificationPaths(CkbTest):
 
     """VM-version/syscall fixtures through RPC, real relay and cold full blocks."""
 
-    def teardown_method(self, method):
-        pass
-
     # TEST-MAP: VT2-24
     # TEST-EVIDENCE-BEGIN: VT2-24
     # Evidence | Case: VT2-24 (covered)
@@ -336,12 +333,12 @@ class TestVmVerificationPaths(CkbTest):
     # Evidence | Assert: assert body.pop("hash") == tx_hash
     # Evidence | Assert: assert body == tx
     # Evidence | Assert: assert int(response["cycles"], 16) == cycles
-    # Evidence | Assert: assert int(owners(client)[tx_hash]["cycles"], 16) == cycles
+    # Evidence | Assert: assert int(pool_transactions(client)[tx_hash]["cycles"], 16) == cycles
     # Evidence | Assert: assert receiver.submit_block("0x0", block) == expected_hash
     # Evidence | Assert: raise AssertionError(f"block receiver did not reach {expected_tip}")
     # Evidence | Limit: Seven fixture labels are an in-method loop, not seven independent pytest parameter selectors.
     # Evidence | Limit: Baseline JSON fixes values/hashes but lacks original pre-change commit/binary/measurement receipt; historical provenance is unverified.
-    # Evidence | Limit: Coverage is static; this native-pytest review does not establish current real-node per-Case outcomes.
+    # Evidence | Limit: Static coverage only; this readability review does not establish current real-node per-Case outcomes.
     # TEST-EVIDENCE-END: VT2-24
     def test_vm_cycles_match_across_rpc_relay_and_block_verification(self):
         """
@@ -381,10 +378,17 @@ class TestVmVerificationPaths(CkbTest):
         miner = self.miner
         receiver = self.receiver
         cold = self.cold
-        workload.connect(miner, receiver)
+        miner.connected(receiver)
+        workload.wait_for(
+            lambda: any(
+                peer["node_id"] == miner.get_peer_id()
+                for peer in receiver.getClient().get_peers()
+            ),
+            "expected peer connection",
+        )
         genesis = miner.getClient().get_block_by_number("0x0")["transactions"][0]
         for cell, (label, hash_type, names) in enumerate(fixtures):
-            tx = workload.transaction(
+            tx = workload.build_transaction(
                 miner, cell=cell, output_capacity=200 * workload.CKB
             )
             deps, code_hash = [], tx["outputs"][0]["lock"]["code_hash"]
@@ -414,7 +418,7 @@ class TestVmVerificationPaths(CkbTest):
             preview = miner.getClient().test_tx_pool_accept(tx, "passthrough")
             assert int(preview["cycles"], 16) == expected[label], (label, preview)
             tx_hash = miner.getClient().send_transaction(tx)
-            workload.accepted(receiver, tx_hash, tx, expected[label])
+            workload.assert_pool_transaction(receiver, tx_hash, tx, expected[label])
             assert cold.get_connected_count() == 0
             assert (
                 cold.getClient().get_transaction(tx_hash)["tx_status"]["status"]

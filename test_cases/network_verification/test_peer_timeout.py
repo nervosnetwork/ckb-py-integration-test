@@ -124,9 +124,6 @@ class TestRemoteTimeBudgetPeer(CkbTest):
             workload.save_node_logs(node)
             node.clean()
 
-    def teardown_method(self, method):
-        pass
-
     # TEST-MAP: VT2-01
     # TEST-MAP: VT2-02
     # TEST-EVIDENCE-BEGIN: VT2-01
@@ -138,14 +135,14 @@ class TestRemoteTimeBudgetPeer(CkbTest):
     # Evidence | Assert: assert body.pop("hash") == tx_hash
     # Evidence | Assert: assert body == tx
     # Evidence | Assert: assert int(response["cycles"], 16) == cycles
-    # Evidence | Assert: assert int(owners(client)[tx_hash]["cycles"], 16) == cycles
+    # Evidence | Assert: assert int(pool_transactions(client)[tx_hash]["cycles"], 16) == cycles
     # Evidence | Assert: assert any(
     # Evidence |             peer["node_id"] == source.get_peer_id()
     # Evidence |             for peer in receiver.getClient().get_peers()
     # Evidence |         )
     # Evidence | Assert: assert receiver.getClient().get_banned_addresses() == []
     # Evidence | Limit: Honest node relay supplies truthful cycles; no malformed packet or exact CPU-time threshold is claimed.
-    # Evidence | Limit: Coverage is static; this native-pytest review does not establish current real-node per-Case outcomes.
+    # Evidence | Limit: Static coverage only; this readability review does not establish current real-node per-Case outcomes.
     # TEST-EVIDENCE-END: VT2-01
     # TEST-EVIDENCE-BEGIN: VT2-02
     # Evidence | Case: VT2-02 (covered)
@@ -157,18 +154,19 @@ class TestRemoteTimeBudgetPeer(CkbTest):
     # Evidence |         f"processed remote CPU-budget refusal {count} for {tx_hash}",
     # Evidence |         45,
     # Evidence |     )
-    # Evidence | Assert: assert tx_hash not in owners(client)
+    # Evidence | Assert: assert tx_hash not in pool_transactions(client)
     # Evidence | Assert: assert result["tx_status"]["status"] == "unknown", result
     # Evidence | Assert: assert result["transaction"] is None
     # Evidence | Assert: assert client.get_banned_addresses() == []
     # Evidence | Assert: assert node.get_connected_count() >= 1
     # Evidence | Assert: assert refusals >= 1
-    # Evidence | Assert: assert source.getClient().send_transaction(tx) == tx_hash
-    # Evidence | Assert: wait_for(
-    # Evidence |         lambda: len(transaction_requests(source, tx_hash)) > requests_before,
-    # Evidence |         f"fresh GetRelayTransactions for {tx_hash}",
-    # Evidence |         45,
-    # Evidence |     )
+    # Evidence | Assert: assert other.getClient().send_transaction(slow) == tx_hash
+    # Evidence | Assert: workload.wait_for(
+    # Evidence |             lambda: len(workload.transaction_requests(other, tx_hash))
+    # Evidence |             > requests_before,
+    # Evidence |             f"fresh GetRelayTransactions for {tx_hash}",
+    # Evidence |             45,
+    # Evidence |         )
     # Evidence | Assert: assert any(
     # Evidence |             peer["node_id"] == source.get_peer_id()
     # Evidence |             for peer in receiver.getClient().get_peers()
@@ -182,10 +180,10 @@ class TestRemoteTimeBudgetPeer(CkbTest):
     # Evidence | Assert: assert body.pop("hash") == tx_hash
     # Evidence | Assert: assert body == tx
     # Evidence | Assert: assert int(response["cycles"], 16) == cycles
-    # Evidence | Assert: assert int(owners(client)[tx_hash]["cycles"], 16) == cycles
+    # Evidence | Assert: assert int(pool_transactions(client)[tx_hash]["cycles"], 16) == cycles
     # Evidence | Limit: Request proof comes from sender protocol log, not custom packet capture. Reannouncement uses another peer; fast control uses original sender.
     # Evidence | Limit: Second refusal log precedes some cleanup; the new request already proves release following the first refusal.
-    # Evidence | Limit: Coverage is static; this native-pytest review does not establish current real-node per-Case outcomes.
+    # Evidence | Limit: Static coverage only; this readability review does not establish current real-node per-Case outcomes.
     # TEST-EVIDENCE-END: VT2-02
     def test_remote_timeout_keeps_peer_connected_for_next_valid_transaction(self):
         """
@@ -196,13 +194,43 @@ class TestRemoteTimeBudgetPeer(CkbTest):
         source = self.source
         receiver = self.receiver
         other = self.other
-        slow = workload.transaction(source, slow=True)
-        tx_hash = workload.relay_slow(source, receiver, slow)
-        workload.retry_slow(other, receiver, slow, tx_hash)
+        slow = workload.build_transaction(source, slow=True)
+        source.connected(receiver)
+        workload.wait_for(
+            lambda: any(
+                peer["node_id"] == source.get_peer_id()
+                for peer in receiver.getClient().get_peers()
+            ),
+            "expected peer connection",
+        )
+        tx_hash = source.getClient().send_transaction(slow)
+        workload.assert_pool_transaction(source, tx_hash, slow, workload.BUDGET_CYCLES)
+        workload.assert_remote_budget_refusal(receiver, tx_hash)
+        refusals = len(workload.remote_refusals(receiver, tx_hash))
+        requests_before = len(workload.transaction_requests(other, tx_hash))
+        assert refusals >= 1
+        other.connected(receiver)
+        workload.wait_for(
+            lambda: any(
+                peer["node_id"] == other.get_peer_id()
+                for peer in receiver.getClient().get_peers()
+            ),
+            "expected peer connection",
+        )
+        assert other.getClient().send_transaction(slow) == tx_hash
+        workload.wait_for(
+            lambda: len(workload.transaction_requests(other, tx_hash))
+            > requests_before,
+            f"fresh GetRelayTransactions for {tx_hash}",
+            45,
+        )
+        workload.assert_remote_budget_refusal(receiver, tx_hash, refusals + 1)
         # This new hash uses an independent input and the original peer.
-        fast = workload.transaction(source, cell=1)
+        fast = workload.build_transaction(source, cell=1)
         fast_hash = source.getClient().send_transaction(fast)
-        workload.accepted(receiver, fast_hash, fast, workload.FAST_CYCLES)
+        workload.assert_pool_transaction(
+            receiver, fast_hash, fast, workload.FAST_CYCLES
+        )
         assert any(
             peer["node_id"] == source.get_peer_id()
             for peer in receiver.getClient().get_peers()

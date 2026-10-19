@@ -85,7 +85,7 @@ def test_restart_requires_old_process_exit_before_start(monkeypatch):
 
     monkeypatch.setattr(workload, "wait_for", immediate_check)
     with pytest.raises(AssertionError, match="old node PID 42 exited"):
-        workload.restart(Node())
+        workload.restart_and_assert_new_process(Node())
     assert events == ["stop"]
 
 
@@ -105,4 +105,53 @@ def test_restart_requires_a_different_listening_pid(monkeypatch):
     monkeypatch.setattr(workload, "wait_for", immediate_check)
     node = SimpleNamespace(stop=lambda: None, start=lambda: None)
     with pytest.raises(AssertionError):
-        workload.restart(node)
+        workload.restart_and_assert_new_process(node)
+
+
+def test_tcp_reader_retains_coalesced_messages():
+    import socket
+    from test_cases.network_verification.test_budget_rbf import _read_json_line
+
+    reader, writer = socket.socketpair()
+    try:
+        writer.sendall(b'{"first": 1}\n{"second": 2}\n')
+        first, buffer = _read_json_line(reader, b"", 1)
+        assert first == {"first": 1}
+        second, buffer = _read_json_line(reader, buffer, 1)
+        assert second == {"second": 2}
+        assert buffer == b""
+    finally:
+        reader.close()
+        writer.close()
+
+
+def test_tcp_reader_preserves_partial_message_on_timeout():
+    import socket
+    from test_cases.network_verification.test_budget_rbf import _read_json_line
+
+    reader, writer = socket.socketpair()
+    try:
+        writer.sendall(b'{"value":')
+        value, buffer = _read_json_line(reader, b"", 0.01)
+        assert value is None
+        assert buffer == b'{"value":'
+        writer.sendall(b" 3}\n")
+        value, buffer = _read_json_line(reader, buffer, 1)
+        assert value == {"value": 3}
+        assert buffer == b""
+    finally:
+        reader.close()
+        writer.close()
+
+
+def test_tcp_reader_rejects_closed_stream():
+    import socket
+    from test_cases.network_verification.test_budget_rbf import _read_json_line
+
+    reader, writer = socket.socketpair()
+    writer.close()
+    try:
+        with pytest.raises(AssertionError, match="rejected_transaction stream closed"):
+            _read_json_line(reader, b"", 1)
+    finally:
+        reader.close()

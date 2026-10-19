@@ -69,7 +69,7 @@ class TestCkbCliMultisig203(CkbTest):
     # Evidence |         f"miner 100 block ,but tx_response always pending:{tx_hash}，tx_response:{tx_response}"
     # Evidence |     )
     # Evidence | Limit: Representative creation hash rule only, not complete Type ID update/destroy matrix.
-    # Evidence | Limit: Coverage is static; this native-pytest review does not establish current real-node per-Case outcomes.
+    # Evidence | Limit: Static coverage only; this readability review does not establish current real-node per-Case outcomes.
     # TEST-EVIDENCE-END: VT2-27
     @pytest.mark.network_verification
     def test_01_dep_groups_enable_type_id_true(self):

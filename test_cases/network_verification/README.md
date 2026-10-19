@@ -90,7 +90,23 @@ and cleans them in `teardown_class`, following the existing project style.
 Node roles, `max_tx_verify_time_ms` (milliseconds), cycle limits, startup, and
 the common 30-block chain are written directly in each class. Independent
 persistence and local-RBF scenarios use separate classes so their pools and
-chains cannot leak into one another. Test methods keep the original transaction
-steps and assertions; `workload` retains only shared transaction/assertion,
-fixed-genesis-data, log-copy and verified-restart utilities, not a node-lifecycle
-context manager.
+chains cannot leak into one another. Test methods show connect, submit, retry/request barriers and subscription ACK/event
+checks directly; no combined relay/retry scenario helpers or custom subscription
+class remain. Configuration preparation/rejection and the single-use since
+transaction construction are also written at their use sites. Tests inherit the
+project's normal method teardown instead of overriding it with empty methods.
+
+`workload` retains reusable low-level tools rather than full scenarios:
+
+- `build_transaction` and fixed genesis scripts/cells: shared immutable inputs.
+- `assert_pool_transaction` / `assert_remote_budget_refusal`: shared exact-body,
+  cycle, pool-state, peer and ban assertions; they do not submit or connect peers.
+- `restart_and_assert_new_process`: the same PID-ownership/exit/replacement proof
+  used by three cold-restart tests; not an unchecked stop/start shortcut.
+- Bounded polling, free-port allocation, hash/log extraction, full-block delivery
+  and log retention. The TCP test keeps only a buffered line reader so fragmented
+  or coalesced messages and finite deadlines retain their original behavior.
+
+Existing DAO/Type ID serialization helpers and the native pytest feature guard
+are reused unchanged. These helpers avoid duplicating protocol packing or
+weakening shared invariants; scenario actions stay visible in each test.

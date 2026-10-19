@@ -93,9 +93,6 @@ class TestBudgetConsensusIsolation(CkbTest):
             workload.save_node_logs(node)
             node.clean()
 
-    def teardown_method(self, method):
-        pass
-
     # TEST-MAP: VT2-08
     # TEST-EVIDENCE-BEGIN: VT2-08
     # Evidence | Case: VT2-08 (covered)
@@ -107,7 +104,7 @@ class TestBudgetConsensusIsolation(CkbTest):
     # Evidence |         f"processed remote CPU-budget refusal {count} for {tx_hash}",
     # Evidence |         45,
     # Evidence |     )
-    # Evidence | Assert: assert tx_hash not in owners(client)
+    # Evidence | Assert: assert tx_hash not in pool_transactions(client)
     # Evidence | Assert: assert result["tx_status"]["status"] == "unknown", result
     # Evidence | Assert: assert result["transaction"] is None
     # Evidence | Assert: assert client.get_banned_addresses() == []
@@ -124,7 +121,7 @@ class TestBudgetConsensusIsolation(CkbTest):
     # Evidence |             == miner.getClient().get_tip_header()["hash"]
     # Evidence |         )
     # Evidence | Limit: Full-block RPC instead of P2P block transport, with ordinary consensus validation still enabled at receiver.
-    # Evidence | Limit: Coverage is static; this native-pytest review does not establish current real-node per-Case outcomes.
+    # Evidence | Limit: Static coverage only; this readability review does not establish current real-node per-Case outcomes.
     # TEST-EVIDENCE-END: VT2-08
     def test_pool_timeout_does_not_reject_independently_mined_valid_block(self):
         """
@@ -134,8 +131,18 @@ class TestBudgetConsensusIsolation(CkbTest):
         """
         miner = self.miner
         receiver = self.receiver
-        tx = workload.transaction(miner, slow=True)
-        tx_hash = workload.relay_slow(miner, receiver, tx)
+        tx = workload.build_transaction(miner, slow=True)
+        miner.connected(receiver)
+        workload.wait_for(
+            lambda: any(
+                peer["node_id"] == miner.get_peer_id()
+                for peer in receiver.getClient().get_peers()
+            ),
+            "expected peer connection",
+        )
+        tx_hash = miner.getClient().send_transaction(tx)
+        workload.assert_pool_transaction(miner, tx_hash, tx, workload.BUDGET_CYCLES)
+        workload.assert_remote_budget_refusal(receiver, tx_hash)
         receiver.getClient().remove_node(miner.get_peer_id())
         workload.wait_for(
             lambda: receiver.get_connected_count() == 0,

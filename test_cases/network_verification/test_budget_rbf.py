@@ -18,49 +18,18 @@ from test_cases.network_verification.runtime import requires_test_feature
 from test_cases.network_verification import workload
 
 
-class RejectionSubscription:
-    """Bounded TCP reader; an acknowledged subscription precedes every trigger."""
-
-    def __init__(self, node):
-        host, port = toml.loads(Path(node.ckb_toml_path).read_text())["rpc"][
-            "tcp_listen_address"
-        ].rsplit(":", 1)
-        self.socket = socket.create_connection((host, int(port)), timeout=10)
-        self.buffer = b""
-        self.socket.sendall(
-            json.dumps(
-                {
-                    "id": 1,
-                    "jsonrpc": "2.0",
-                    "method": "subscribe",
-                    "params": ["rejected_transaction"],
-                }
-            ).encode()
-            + b"\n"
-        )
-        ack = self.read(10)
-        assert ack["id"] == 1 and ack.get("result") is not None, ack
-        self.subscription = ack["result"]
-
-    def read(self, timeout):
-        deadline = time.monotonic() + timeout
-        while b"\n" not in self.buffer:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0 or not select.select([self.socket], [], [], remaining)[0]:
-                return None
-            data = self.socket.recv(65536)
-            assert data, "rejected_transaction stream closed"
-            self.buffer += data
-        line, self.buffer = self.buffer.split(b"\n", 1)
-        return json.loads(line)
-
-    def event(self, timeout):
-        value = self.read(timeout)
-        if value is None:
-            return None
-        assert value["params"]["subscription"] == self.subscription
-        result = value["params"]["result"]
-        return json.loads(result) if isinstance(result, str) else result
+def _read_json_line(connection, buffer, timeout):
+    """Read one bounded TCP frame, retaining partial/coalesced data for the next read."""
+    deadline = time.monotonic() + timeout
+    while b"\n" not in buffer:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0 or not select.select([connection], [], [], remaining)[0]:
+            return None, buffer
+        data = connection.recv(65536)
+        assert data, "rejected_transaction stream closed"
+        buffer += data
+    line, buffer = buffer.split(b"\n", 1)
+    return json.loads(line), buffer
 
 
 @pytest.mark.network_verification
@@ -178,32 +147,30 @@ class TestBudgetReplacement(CkbTest):
             workload.save_node_logs(node)
             node.clean()
 
-    def teardown_method(self, method):
-        pass
-
     # TEST-MAP: VT2-48
     # TEST-MAP: VT2-29
     # TEST-EVIDENCE-BEGIN: VT2-29
     # Evidence | Case: VT2-29 (covered)
-    # Evidence | Setup: Acknowledged rejected_transaction TCP subscription before trigger; receiver cap1; slow candidate plus independent normal RBF control. Fresh class-owned nodes are explicitly configured and started in TestBudgetReplacement.setup_class; each class has one independent scenario.
+    # Evidence | Setup: Acknowledged rejected_transaction TCP subscription before trigger; receiver cap1; slow candidate plus independent normal RBF control. Fresh class-owned nodes are explicitly configured and started in TestBudgetReplacement.setup_class; each class has one independent scenario. Socket creation, subscribe request, ACK and event validation are explicit; handshake and event processing share the close-finally.
     # Evidence | Trigger: Slow network refusal, fresh same-hash request, then normal high-fee replacement; consume same stream until explicit positive event and drain0.5s.
     # Evidence | Observe: Target slow hash absent from all observed events; positive normal_hash/RBFRejected event and live stream asserted.
     # Evidence | Assert: assert ack["id"] == 1 and ack.get("result") is not None, ack
     # Evidence | Assert: assert data, "rejected_transaction stream closed"
-    # Evidence | Assert: assert value["params"]["subscription"] == self.subscription
+    # Evidence | Assert: assert value["params"]["subscription"] == subscription_id
     # Evidence | Assert: assert event is not None, "ordinary RBF positive event missing"
     # Evidence | Assert: assert event_hash != tx_hash, event
     # Evidence | Assert: assert positive
     # Evidence | Assert: assert event[0]["transaction"]["hash"] != tx_hash, event
     # Evidence | Assert: assert refusals >= 1
-    # Evidence | Assert: assert source.getClient().send_transaction(tx) == tx_hash
-    # Evidence | Assert: wait_for(
-    # Evidence |         lambda: len(transaction_requests(source, tx_hash)) > requests_before,
-    # Evidence |         f"fresh GetRelayTransactions for {tx_hash}",
-    # Evidence |         45,
-    # Evidence |     )
+    # Evidence | Assert: assert other.getClient().send_transaction(candidate) == tx_hash
+    # Evidence | Assert: workload.wait_for(
+    # Evidence |                 lambda: len(workload.transaction_requests(other, tx_hash))
+    # Evidence |                 > requests_before,
+    # Evidence |                 f"fresh GetRelayTransactions for {tx_hash}",
+    # Evidence |                 45,
+    # Evidence |             )
     # Evidence | Limit: Finite negative window plus positive same-stream barrier; no proof of private TryFrom execution or arbitrarily delayed event absence.
-    # Evidence | Limit: Coverage is static; this native-pytest review does not establish current real-node per-Case outcomes.
+    # Evidence | Limit: Static coverage only; this readability review does not establish current real-node per-Case outcomes.
     # TEST-EVIDENCE-END: VT2-29
     # TEST-EVIDENCE-BEGIN: VT2-48
     # Evidence | Case: VT2-48 (covered)
@@ -228,25 +195,26 @@ class TestBudgetReplacement(CkbTest):
     # Evidence |         f"processed remote CPU-budget refusal {count} for {tx_hash}",
     # Evidence |         45,
     # Evidence |     )
-    # Evidence | Assert: assert tx_hash not in owners(client)
+    # Evidence | Assert: assert tx_hash not in pool_transactions(client)
     # Evidence | Assert: assert result["tx_status"]["status"] == "unknown", result
     # Evidence | Assert: assert result["transaction"] is None
     # Evidence | Assert: assert client.get_banned_addresses() == []
     # Evidence | Assert: assert node.get_connected_count() >= 1
     # Evidence | Assert: assert refusals >= 1
-    # Evidence | Assert: assert source.getClient().send_transaction(tx) == tx_hash
-    # Evidence | Assert: wait_for(
-    # Evidence |         lambda: len(transaction_requests(source, tx_hash)) > requests_before,
-    # Evidence |         f"fresh GetRelayTransactions for {tx_hash}",
-    # Evidence |         45,
-    # Evidence |     )
+    # Evidence | Assert: assert other.getClient().send_transaction(candidate) == tx_hash
+    # Evidence | Assert: workload.wait_for(
+    # Evidence |                 lambda: len(workload.transaction_requests(other, tx_hash))
+    # Evidence |                 > requests_before,
+    # Evidence |                 f"fresh GetRelayTransactions for {tx_hash}",
+    # Evidence |                 45,
+    # Evidence |             )
     # Evidence | Assert: assert response["tx_status"]["status"] in ("pending", "proposed"), response
     # Evidence | Assert: assert body.pop("hash") == tx_hash
     # Evidence | Assert: assert body == tx
     # Evidence | Assert: assert int(response["cycles"], 16) == cycles
-    # Evidence | Assert: assert int(owners(client)[tx_hash]["cycles"], 16) == cycles
+    # Evidence | Assert: assert int(pool_transactions(client)[tx_hash]["cycles"], 16) == cycles
     # Evidence | Limit: Public pool-state protection, not private spend-owner map.
-    # Evidence | Limit: Coverage is static; this native-pytest review does not establish current real-node per-Case outcomes.
+    # Evidence | Limit: Static coverage only; this readability review does not establish current real-node per-Case outcomes.
     # TEST-EVIDENCE-END: VT2-48
     def test_network_timeout_preserves_parent_child_until_same_candidate_local_rbf(
         self,
@@ -260,7 +228,7 @@ class TestBudgetReplacement(CkbTest):
         receiver = self.receiver
         other = self.other
         client = receiver.getClient()
-        parent_tx = workload.transaction(receiver)
+        parent_tx = workload.build_transaction(receiver)
         parent = client.send_transaction(parent_tx)
         child_tx = copy.deepcopy(parent_tx)
         child_tx["inputs"][0]["previous_output"] = {
@@ -272,26 +240,87 @@ class TestBudgetReplacement(CkbTest):
         before = client.get_raw_tx_pool(True)
         bodies = {key: client.get_transaction(key) for key in (parent, child)}
         tip = client.get_tip_header()["hash"]
-        subscription = RejectionSubscription(receiver)
+        # 明确建立 TCP 订阅并校验 ACK；清理覆盖握手和后续事件断言。
+        host, port = toml.loads(Path(receiver.ckb_toml_path).read_text())["rpc"][
+            "tcp_listen_address"
+        ].rsplit(":", 1)
+        connection = socket.create_connection((host, int(port)), timeout=10)
+        subscription_buffer = b""
         try:
-            candidate = workload.transaction(source, slow=True)
-            tx_hash = workload.relay_slow(source, receiver, candidate)
+            connection.sendall(
+                json.dumps(
+                    {
+                        "id": 1,
+                        "jsonrpc": "2.0",
+                        "method": "subscribe",
+                        "params": ["rejected_transaction"],
+                    }
+                ).encode()
+                + b"\n"
+            )
+            ack, subscription_buffer = _read_json_line(
+                connection, subscription_buffer, 10
+            )
+            assert ack["id"] == 1 and ack.get("result") is not None, ack
+            subscription_id = ack["result"]
+            candidate = workload.build_transaction(source, slow=True)
+            source.connected(receiver)
+            workload.wait_for(
+                lambda: any(
+                    peer["node_id"] == source.get_peer_id()
+                    for peer in receiver.getClient().get_peers()
+                ),
+                "expected peer connection",
+            )
+            tx_hash = source.getClient().send_transaction(candidate)
+            workload.assert_pool_transaction(
+                source, tx_hash, candidate, workload.BUDGET_CYCLES
+            )
+            workload.assert_remote_budget_refusal(receiver, tx_hash)
             # A fresh real GetRelayTransactions confirms release of the
             # first attempt's known marker before state/event assertions.
-            workload.retry_slow(other, receiver, candidate, tx_hash)
+            refusals = len(workload.remote_refusals(receiver, tx_hash))
+            requests_before = len(workload.transaction_requests(other, tx_hash))
+            assert refusals >= 1
+            other.connected(receiver)
+            workload.wait_for(
+                lambda: any(
+                    peer["node_id"] == other.get_peer_id()
+                    for peer in receiver.getClient().get_peers()
+                ),
+                "expected peer connection",
+            )
+            assert other.getClient().send_transaction(candidate) == tx_hash
+            workload.wait_for(
+                lambda: len(workload.transaction_requests(other, tx_hash))
+                > requests_before,
+                f"fresh GetRelayTransactions for {tx_hash}",
+                45,
+            )
+            workload.assert_remote_budget_refusal(receiver, tx_hash, refusals + 1)
             assert client.get_raw_tx_pool(True) == before
             assert {
                 key: client.get_transaction(key) for key in (parent, child)
             } == bodies
             assert client.get_tip_header()["hash"] == tip
-            normal = workload.transaction(receiver, cell=2)
+            normal = workload.build_transaction(receiver, cell=2)
             normal_hash = client.send_transaction(normal)
             replacement = copy.deepcopy(normal)
             replacement["outputs"][0]["capacity"] = hex(6490 * workload.CKB)
             client.send_transaction(replacement)
             deadline, positive = time.monotonic() + 15, False
             while time.monotonic() < deadline and not positive:
-                event = subscription.event(max(0.01, deadline - time.monotonic()))
+                value, subscription_buffer = _read_json_line(
+                    connection,
+                    subscription_buffer,
+                    max(0.01, deadline - time.monotonic()),
+                )
+                if value is None:
+                    event = None
+                else:
+                    assert value["params"]["subscription"] == subscription_id
+                    result = value["params"]["result"]
+                    event = json.loads(result) if isinstance(result, str) else result
                 assert event is not None, "ordinary RBF positive event missing"
                 event_hash = event[0]["transaction"]["hash"]
                 assert event_hash != tx_hash, event
@@ -302,7 +331,15 @@ class TestBudgetReplacement(CkbTest):
             # Finite negative window plus the same-stream positive barrier.
             deadline = time.monotonic() + 0.5
             while time.monotonic() < deadline:
-                event = subscription.event(deadline - time.monotonic())
+                value, subscription_buffer = _read_json_line(
+                    connection, subscription_buffer, deadline - time.monotonic()
+                )
+                if value is None:
+                    event = None
+                else:
+                    assert value["params"]["subscription"] == subscription_id
+                    result = value["params"]["result"]
+                    event = json.loads(result) if isinstance(result, str) else result
                 if event is None:
                     break
                 assert event[0]["transaction"]["hash"] != tx_hash, event
@@ -310,7 +347,9 @@ class TestBudgetReplacement(CkbTest):
                 key: client.get_transaction(key) for key in (parent, child)
             } == bodies
             assert client.send_transaction(candidate) == tx_hash
-            workload.accepted(receiver, tx_hash, candidate, workload.BUDGET_CYCLES)
+            workload.assert_pool_transaction(
+                receiver, tx_hash, candidate, workload.BUDGET_CYCLES
+            )
             for old in (parent, child):
                 status = client.get_transaction(old)["tx_status"]
                 assert (
@@ -318,7 +357,7 @@ class TestBudgetReplacement(CkbTest):
                 )
             assert client.get_tip_header()["hash"] == tip
         finally:
-            subscription.socket.close()
+            connection.close()
         self.did_pass = True
 
 
@@ -406,10 +445,6 @@ class TestLocalConflictRecovery(CkbTest):
             workload.save_node_logs(node)
             node.clean()
 
-    def teardown_method(self, method):
-        # 日志由 teardown_class 保留，避免复制项目共享 tmp。
-        pass
-
     # TEST-MAP: VT2-45
     # TEST-EVIDENCE-BEGIN: VT2-45
     # Evidence | Case: VT2-45 (covered)
@@ -417,9 +452,9 @@ class TestLocalConflictRecovery(CkbTest):
     # Evidence | Trigger: Submit A locally once, require RBFRejected; submit C; perform no further A submit/notify/relay while waiting for automatic readmission.
     # Evidence | Observe: A absent after local error; later exact body/cycles in pool, B gone/C present, no peers and both A/C committed.
     # Evidence | Assert: assert error["code"] == -1111 and "RBFRejected" in error["data"], error
-    # Evidence | Assert: assert tx_hash not in workload.owners(client)
-    # Evidence | Assert: assert b_hash not in workload.owners(client)
-    # Evidence | Assert: assert c_hash in workload.owners(client)
+    # Evidence | Assert: assert tx_hash not in workload.pool_transactions(client)
+    # Evidence | Assert: assert b_hash not in workload.pool_transactions(client)
+    # Evidence | Assert: assert c_hash in workload.pool_transactions(client)
     # Evidence | Assert: assert receiver.get_connected_count() == 0
     # Evidence | Assert: assert client.get_transaction(tx_hash)["tx_status"]["status"] == "committed"
     # Evidence | Assert: assert client.get_transaction(c_hash)["tx_status"]["status"] == "committed"
@@ -427,19 +462,19 @@ class TestLocalConflictRecovery(CkbTest):
     # Evidence | Assert: assert body.pop("hash") == tx_hash
     # Evidence | Assert: assert body == tx
     # Evidence | Assert: assert int(response["cycles"], 16) == cycles
-    # Evidence | Assert: assert int(owners(client)[tx_hash]["cycles"], 16) == cycles
+    # Evidence | Assert: assert int(pool_transactions(client)[tx_hash]["cycles"], 16) == cycles
     # Evidence | Assert: wait_for(
     # Evidence |         lambda: len(remote_refusals(node, tx_hash)) >= count,
     # Evidence |         f"processed remote CPU-budget refusal {count} for {tx_hash}",
     # Evidence |         45,
     # Evidence |     )
-    # Evidence | Assert: assert tx_hash not in owners(client)
+    # Evidence | Assert: assert tx_hash not in pool_transactions(client)
     # Evidence | Assert: assert result["tx_status"]["status"] == "unknown", result
     # Evidence | Assert: assert result["transaction"] is None
     # Evidence | Assert: assert client.get_banned_addresses() == []
     # Evidence | Assert: assert node.get_connected_count() >= 1
     # Evidence | Limit: Public automatic recovery with no-resubmit/no-peer control; private queue/cache internals not observed.
-    # Evidence | Limit: Coverage is static; this native-pytest review does not establish current real-node per-Case outcomes.
+    # Evidence | Limit: Static coverage only; this readability review does not establish current real-node per-Case outcomes.
     # TEST-EVIDENCE-END: VT2-45
     def test_locally_rejected_slow_transaction_recovers_when_conflict_is_replaced(self):
         """
@@ -450,16 +485,28 @@ class TestLocalConflictRecovery(CkbTest):
         source = self.source
         receiver = self.receiver
         client = receiver.getClient()
-        candidate = workload.transaction(source, slow=True)
-        tx_hash = workload.relay_slow(source, receiver, candidate)
+        candidate = workload.build_transaction(source, slow=True)
+        source.connected(receiver)
+        workload.wait_for(
+            lambda: any(
+                peer["node_id"] == source.get_peer_id()
+                for peer in receiver.getClient().get_peers()
+            ),
+            "expected peer connection",
+        )
+        tx_hash = source.getClient().send_transaction(candidate)
+        workload.assert_pool_transaction(
+            source, tx_hash, candidate, workload.BUDGET_CYCLES
+        )
+        workload.assert_remote_budget_refusal(receiver, tx_hash)
         client.remove_node(source.get_peer_id())
         workload.wait_for(
             lambda: receiver.get_connected_count() == 0, "isolate local retry"
         )
         # B spends X/Y, A only X. A's 100 CKB fee is valid but insufficient
         # to replace B (150 CKB). C replaces B using only Y (200 CKB).
-        b = workload.transaction(receiver)
-        y = workload.transaction(receiver, cell=1)
+        b = workload.build_transaction(receiver)
+        y = workload.build_transaction(receiver, cell=1)
         b["inputs"].extend(y["inputs"])
         b["outputs"][0]["capacity"] = hex((13000 - 150) * workload.CKB)
         b_hash = client.send_transaction(b)
@@ -476,15 +523,17 @@ class TestLocalConflictRecovery(CkbTest):
         response.raise_for_status()
         error = response.json()["error"]
         assert error["code"] == -1111 and "RBFRejected" in error["data"], error
-        assert tx_hash not in workload.owners(client)
+        assert tx_hash not in workload.pool_transactions(client)
         c = copy.deepcopy(y)
         c["outputs"][0]["capacity"] = hex((6500 - 200) * workload.CKB)
         c_hash = client.send_transaction(c)
         # No further submit/notify/relay of A: this is the queued local
         # recovery route, not synchronous direct RPC admission.
-        workload.accepted(receiver, tx_hash, candidate, workload.BUDGET_CYCLES)
-        assert b_hash not in workload.owners(client)
-        assert c_hash in workload.owners(client)
+        workload.assert_pool_transaction(
+            receiver, tx_hash, candidate, workload.BUDGET_CYCLES
+        )
+        assert b_hash not in workload.pool_transactions(client)
+        assert c_hash in workload.pool_transactions(client)
         assert receiver.get_connected_count() == 0
         self.Miner.miner_until_tx_committed(receiver, tx_hash)
         self.Miner.miner_until_tx_committed(receiver, c_hash)

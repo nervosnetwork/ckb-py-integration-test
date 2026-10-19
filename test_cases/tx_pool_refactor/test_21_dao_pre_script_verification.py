@@ -398,7 +398,7 @@ class TestDaoPreScriptVerification(CkbTest):
     # Evidence |         )
     # Evidence | Assert: self.fail(f"transaction not committed: {tx_hash}")
     # Evidence | Limit: Six index/delta unittest subTests occur inside one pytest selector; no per-subtest result record assumed.
-    # Evidence | Limit: Coverage is static; this native-pytest review does not establish current real-node per-Case outcomes.
+    # Evidence | Limit: Static coverage only; this readability review does not establish current real-node per-Case outcomes.
     # TEST-EVIDENCE-END: VT2-26
     @pytest.mark.network_verification
     def test_lock_size_boundary_and_index(self):
@@ -515,7 +515,7 @@ class TestDaoPreScriptVerification(CkbTest):
     # Evidence |         )
     # Evidence | Assert: self.fail(f"transaction not committed: {tx_hash}")
     # Evidence | Limit: Earliest public DAO fee error, not a claimed later verifier branch.
-    # Evidence | Limit: Coverage is static; this native-pytest review does not establish current real-node per-Case outcomes.
+    # Evidence | Limit: Static coverage only; this readability review does not establish current real-node per-Case outcomes.
     # TEST-EVIDENCE-END: VT2-54
     @pytest.mark.network_verification
     def test_dao_withdraw_requires_withdrawing_header(self):
