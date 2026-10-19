@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 
 import toml
+import requests
 
 from framework.basic import CkbTest
 from test_cases.tx_pool_refactor.dao_precheck.support import (
@@ -378,6 +379,25 @@ class TestDaoPreScriptVerification(CkbTest):
         self.did_pass = True
 
     # TEST-MAP: DAOQ-06
+    # TEST-MAP: VT2-26
+    # TEST-EVIDENCE-BEGIN: VT2-26
+    # Evidence | Case: VT2-26 (covered)
+    # Evidence | Setup: Real committed DAO deposits with successful lock, preserved header dependency and fee-paying change; target input0 plus additional indices2/4.
+    # Evidence | Trigger: For each DAO index and +/-1 byte lock-args mutation, call both dry-run/submission; then original-sized control is dry-run and committed.
+    # Evidence | Observe: DAO lock error phrase and correct input index, no pool/template membership, legal control must reach committed.
+    # Evidence | Assert: with self.assertRaises(Exception) as error:
+    # Evidence |                             self.client.call(method, [tx, "passthrough"])
+    # Evidence | Assert: assert any(s in text for s in phrases[kind]), text
+    # Evidence | Assert: assert re.search(rf"index[\s:\\]+{index}\b", text), text
+    # Evidence | Assert: assert tx_hash not in pool["pending"] and tx_hash not in pool["proposed"]
+    # Evidence | Assert: assert all(
+    # Evidence |             item["hash"] != tx_hash
+    # Evidence |             for item in client.get_block_template()["transactions"]
+    # Evidence |         )
+    # Evidence | Assert: self.fail(f"transaction not committed: {tx_hash}")
+    # Evidence | Limit: Six index/delta unittest subTests occur inside one pytest selector; no per-subtest result record assumed.
+    # Evidence | Limit: Static coverage only; final frozen full run was not supplied and no per-Case pass is inferred.
+    # TEST-EVIDENCE-END: VT2-26
     def test_lock_size_boundary_and_index(self):
         cells = self._create_cells((True, False, True, False, True))
         for index in (0, 2, 4):
@@ -385,10 +405,14 @@ class TestDaoPreScriptVerification(CkbTest):
                 with self.subTest(index=index, delta=delta):
                     tx = self._prepare_withdraw(cells)
                     tx["outputs"][index]["lock"]["args"] = "0x" + "11" * (20 + delta)
-                    with self.assertRaises(Exception) as error:
-                        self.client.test_tx_pool_accept(tx, "passthrough")
-                    assert_dao_error(error.exception, "lock", index)
-                    self._assert_absent(tx)
+                    for method in ("test_tx_pool_accept", "send_transaction"):
+                        with self.assertRaises(Exception) as error:
+                            self.client.call(method, [tx, "passthrough"])
+                        assert_dao_error(error.exception, "lock", index)
+                        self._assert_absent(tx)
+        control = self._prepare_withdraw(cells)
+        self.client.test_tx_pool_accept(control, "passthrough")
+        self._commit(self.client.send_transaction(control))
         self.did_pass = True
 
     # TEST-MAP: DAOQ-10
@@ -467,4 +491,59 @@ class TestDaoPreScriptVerification(CkbTest):
         assert entry["cycles"] == expected["cycles"] and entry["fee"] == expected["fee"]
         assert self.client.get_block_hash(old_header["number"]) != old_block
         assert self._commit(tx_hash) != old_block
+        self.did_pass = True
+
+    # TEST-MAP: VT2-54
+    # TEST-EVIDENCE-BEGIN: VT2-54
+    # Evidence | Case: VT2-54 (covered)
+    # Evidence | Setup: Actual DAO deposit/prepare committed; mature valid withdrawal has both header deps.
+    # Evidence | Trigger: Deep-copy valid tx and remove only withdrawing header; invoke both RPC methods; unmodified control dry-run/commit.
+    # Evidence | Observe: -1108 Malformed/InvalidOutPoint; no pool/template admission; legal control commits.
+    # Evidence | Assert: assert invalid["header_deps"] == [cells["header"]["hash"], prepare_block]
+    # Evidence | Assert: assert error["code"] == -1108, error
+    # Evidence | Assert: assert (
+    # Evidence |                 "Malformed" in error["message"]
+    # Evidence |                 and "InvalidOutPoint" in error["message"]
+    # Evidence |             ), error
+    # Evidence | Assert: assert tx_hash not in pool["pending"] and tx_hash not in pool["proposed"]
+    # Evidence | Assert: assert all(
+    # Evidence |             item["hash"] != tx_hash
+    # Evidence |             for item in client.get_block_template()["transactions"]
+    # Evidence |         )
+    # Evidence | Assert: self.fail(f"transaction not committed: {tx_hash}")
+    # Evidence | Limit: Earliest public DAO fee error, not a claimed later verifier branch.
+    # Evidence | Limit: Static coverage only; final frozen full run was not supplied and no per-Case pass is inferred.
+    # TEST-EVIDENCE-END: VT2-54
+    def test_dao_withdraw_requires_withdrawing_header(self):
+        cells = self._create_cells()
+        prepare = self._prepare_withdraw(cells)
+        prepare_hash = self.client.send_transaction(prepare)
+        prepare_block = self._commit(prepare_hash)
+        valid = self._final_withdraw(cells, prepare, prepare_hash, prepare_block)
+        invalid = copy.deepcopy(valid)
+        assert invalid["header_deps"] == [cells["header"]["hash"], prepare_block]
+        invalid["header_deps"].remove(prepare_block)
+        for method in ("test_tx_pool_accept", "send_transaction"):
+            # The legacy RPC helper drops error.code when raising; inspect the
+            # public response here so the numeric -1108 contract stays asserted.
+            response = requests.post(
+                self.client.url,
+                json={
+                    "id": 1,
+                    "jsonrpc": "2.0",
+                    "method": method,
+                    "params": [invalid, "passthrough"],
+                },
+                timeout=30,
+            )
+            response.raise_for_status()
+            error = response.json()["error"]
+            assert error["code"] == -1108, error
+            assert (
+                "Malformed" in error["message"]
+                and "InvalidOutPoint" in error["message"]
+            ), error
+            self._assert_absent(invalid)
+        self.client.test_tx_pool_accept(valid, "passthrough")
+        self._commit(self.client.send_transaction(valid))
         self.did_pass = True

@@ -35,29 +35,84 @@ class Test4111(CkbTest):
         cls.node.stop()
         cls.node.clean()
 
-    def test_issue_4111(self):
-        """
-        build tx that output cap > input cap
-        expected contains (outputs capacity) > (inputs capacity) msg
-        but current ckb-cli not return error.data msg :
-        Returns: error:Malformed Overflow transaction
+    # TEST-MAP: VT2-53
+    # TEST-EVIDENCE-BEGIN: VT2-53
+    # Evidence | Case: VT2-53 (covered)
+    # Evidence | Setup: Confirmed99CKB ordinary input and signed100CKB single output; valid98CKB control reuses same input with correct new signature.
+    # Evidence | Trigger: Both RPC endpoints receive invalid negative-fee candidate, then positive-fee control is previewed/submitted.
+    # Evidence | Observe: Actual99/100 capacities, -1108 Malformed/Overflow, unchanged pool; legal98CKB control admitted with matching positive cycles.
+    # Evidence | Assert: assert (
+    # Evidence |             int(
+    # Evidence |                 client.get_transaction(funding)["transaction"]["outputs"][0][
+    # Evidence |                     "capacity"
+    # Evidence |                 ],
+    # Evidence |                 16,
+    # Evidence |             )
+    # Evidence |             == 99 * 100_000_000
+    # Evidence |         )
+    # Evidence | Assert: assert int(invalid["outputs"][0]["capacity"], 16) == 100 * 100_000_000
+    # Evidence | Assert: assert error["code"] == -1108, error
+    # Evidence | Assert: assert "Malformed" in error["data"] and "Overflow" in error["data"], error
+    # Evidence | Assert: assert client.get_raw_tx_pool(False) == before
+    # Evidence | Assert: assert int(valid["outputs"][0]["capacity"], 16) == 98 * 100_000_000
+    # Evidence | Assert: assert result["tx_status"]["status"] in ("pending", "proposed")
+    # Evidence | Assert: assert int(result["cycles"], 16) == int(preview["cycles"], 16) > 0
+    # Evidence | Assert: assert tx_hash in client.get_raw_tx_pool(False)["pending"]
+    # Evidence | Limit: Intended public fee precheck, not later contextual OutputsSumOverflow.
+    # Evidence | Limit: Static coverage only; final frozen full run was not supplied and no per-Case pass is inferred.
+    # TEST-EVIDENCE-END: VT2-53
+    def test_output_capacity_exceeding_inputs_is_rejected(self):
+        import requests
 
-        1. send tx that output cap > input cap
-        """
-
-        # 1. send tx that output cap > input cap
-        with pytest.raises(Exception) as exc_info:
-            self.deploy_and_invoke(
-                self.Config.MINER_PRIVATE_1,
-                f"{get_project_root()}/source/contract/always_success",
-                self.node,
-                1,
-            )
-        expected_error_message = "Malformed Overflow transaction"
-        print("exc_info.value.args[0]:", exc_info.value.args[0])
+        client = self.node.getClient()
+        key = self.Config.ACCOUNT_PRIVATE_2
+        address = self.Ckb_cli.util_key_info_by_private_key(key)["address"]["testnet"]
+        funding = self.Ckb_cli.wallet_transfer_by_private_key(
+            key, address, 99, api_url=client.url, fee_rate="1000"
+        )
+        self.Miner.miner_until_tx_committed(self.node, funding)
         assert (
-            expected_error_message in exc_info.value.args[0]
-        ), f"Expected substring '{expected_error_message}' not found in actual string '{exc_info.value.args[0]}'"
+            int(
+                client.get_transaction(funding)["transaction"]["outputs"][0][
+                    "capacity"
+                ],
+                16,
+            )
+            == 99 * 100_000_000
+        )
+        invalid = self.Tx.build_send_transfer_self_tx_with_input(
+            [funding], ["0x0"], key, fee=-100_000_000, api_url=client.url
+        )
+        assert int(invalid["outputs"][0]["capacity"], 16) == 100 * 100_000_000
+        before = client.get_raw_tx_pool(False)
+        for method in ("test_tx_pool_accept", "send_transaction"):
+            response = requests.post(
+                client.url,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": method,
+                    "params": [invalid, "passthrough"],
+                },
+                timeout=30,
+            )
+            response.raise_for_status()
+            error = response.json()["error"]
+            assert error["code"] == -1108, error
+            assert "Malformed" in error["data"] and "Overflow" in error["data"], error
+            assert client.get_raw_tx_pool(False) == before
+        # Same confirmed input, ordinary positive fee and a valid signature.
+        valid = self.Tx.build_send_transfer_self_tx_with_input(
+            [funding], ["0x0"], key, fee=100_000_000, api_url=client.url
+        )
+        assert int(valid["outputs"][0]["capacity"], 16) == 98 * 100_000_000
+        preview = client.test_tx_pool_accept(valid, "passthrough")
+        tx_hash = client.send_transaction(valid)
+        result = client.get_transaction(tx_hash)
+        assert result["tx_status"]["status"] in ("pending", "proposed")
+        assert int(result["cycles"], 16) == int(preview["cycles"], 16) > 0
+        assert tx_hash in client.get_raw_tx_pool(False)["pending"]
+        self.did_pass = True
 
     def deploy_and_invoke(self, account, path, node, try_count=5):
         if try_count < 0:
