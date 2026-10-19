@@ -227,7 +227,7 @@ def transaction(node, *, cell=0, slow=False, output_capacity=None):
     ]
     assert len(indices) == 8
     deps = []
-    for code_hash in ([fast_hash, slow_hash] if slow else [fast_hash]):
+    for code_hash in [fast_hash, slow_hash] if slow else [fast_hash]:
         index = next(
             i
             for i, data in enumerate(genesis["outputs_data"])

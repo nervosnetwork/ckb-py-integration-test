@@ -230,4 +230,3 @@ Testing: required
 - **VT2-57**：使用实际 cycles 已知的单脚本组交易，声明 C−1 且 CPU 预算充足；预期是 Verification/ExceededMaximumCycles，不是 DeclaredWrongCycles。若改用多脚本组，错误内数值为失败组剩余额度，不将其固定为全交易 C−1。
 - **VT2-48**：A/C 入池后固定链高度，保存两者的 hash、交易体、status、cycles；B 费用和替换条件提前满足，先网络超限再本地提交完全相同 B。本地对照成功后 A/C 被替换，才能排除最初只是 RBF 条件不满足。只断言公开池状态，不读取内部 spend owner。
 - **VT2-39**：无效块必须进入真实区块体验证而非在头部预检查就失败；例如头部本身有效但 DAO 内容不匹配。坏来源与后续健康来源分开，待有效 tip 稳定且停止同步/出块后比较 RPC 字段。同高度才要求 hash 对应同一 header；存在更高候选时不要求它等于 canonical tip hash。该顺序黑盒检查不证明内部“两个候选先到达、失败 reset 后成功回调”的精确竞态被覆盖。
-
