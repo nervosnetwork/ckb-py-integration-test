@@ -137,7 +137,7 @@ class TestTxPoolConfigCompatibility(CkbTest):
     # Evidence | Assert: assert result.returncode != 0, f"{field} unexpectedly started node"
     # Evidence | Assert: assert f"unknown field `{field}`" in output, output[-1500:]
     # Evidence | Limit: Fields loop within one method. Distinct hashes/config behavior do not attest matching product source revisions; caller must supply build provenance.
-    # Evidence | Limit: Static coverage only; final frozen full run was not supplied and no per-Case pass is inferred.
+    # Evidence | Limit: Coverage is static; this B lifecycle review does not establish current real-node per-Case execution outcomes.
     # TEST-EVIDENCE-END: VT2-32
     def test_production_rejects_test_only_budget_fields(self):
         production = binary_dir("production")
@@ -183,7 +183,7 @@ class TestTxPoolConfigCompatibility(CkbTest):
     # Evidence | Assert: assert result.returncode != 0, f"{field} unexpectedly started node"
     # Evidence | Assert: assert f"unknown field `{field}`" in output, output[-1500:]
     # Evidence | Limit: Both selector methods must run; neither alone completes the Case.
-    # Evidence | Limit: Static coverage only; final frozen full run was not supplied and no per-Case pass is inferred.
+    # Evidence | Limit: Coverage is static; this B lifecycle review does not establish current real-node per-Case execution outcomes.
     # Evidence | Limit: The budget-change control now uses the same verified cold process boundary as persistence/reorg tests.
     # TEST-EVIDENCE-END: VT2-33
     def test_budget_configuration_bounds(self):

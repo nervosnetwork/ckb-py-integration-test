@@ -396,7 +396,7 @@ class TestDaoPreScriptVerification(CkbTest):
     # Evidence |         )
     # Evidence | Assert: self.fail(f"transaction not committed: {tx_hash}")
     # Evidence | Limit: Six index/delta unittest subTests occur inside one pytest selector; no per-subtest result record assumed.
-    # Evidence | Limit: Static coverage only; final frozen full run was not supplied and no per-Case pass is inferred.
+    # Evidence | Limit: Coverage is static; this B lifecycle review does not establish current real-node per-Case execution outcomes.
     # TEST-EVIDENCE-END: VT2-26
     def test_lock_size_boundary_and_index(self):
         cells = self._create_cells((True, False, True, False, True))
@@ -512,7 +512,7 @@ class TestDaoPreScriptVerification(CkbTest):
     # Evidence |         )
     # Evidence | Assert: self.fail(f"transaction not committed: {tx_hash}")
     # Evidence | Limit: Earliest public DAO fee error, not a claimed later verifier branch.
-    # Evidence | Limit: Static coverage only; final frozen full run was not supplied and no per-Case pass is inferred.
+    # Evidence | Limit: Coverage is static; this B lifecycle review does not establish current real-node per-Case execution outcomes.
     # TEST-EVIDENCE-END: VT2-54
     def test_dao_withdraw_requires_withdrawing_header(self):
         cells = self._create_cells()

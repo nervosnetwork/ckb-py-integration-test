@@ -1,12 +1,126 @@
 """Real node relay: retryable budget refusal and subsequent peer usefulness."""
 
 from framework.basic import CkbTest
+from pathlib import Path
+import toml
 from test_cases.network_verification.runtime import requires_target
-from test_cases.network_verification import workload as w
+from test_cases.network_verification import workload
 
 
 @requires_target
 class TestRemoteTimeBudgetPeer(CkbTest):
+    @classmethod
+    def setup_class(cls):
+        # 每个测试类使用独立节点；失败时也执行清理。
+        cls.nodes = []
+        cls.started_nodes = []
+        try:
+            # 发送节点：12 秒上限，正常接受并转发慢交易。预算单位为毫秒，不是 VM cycles。
+            rpc_port, p2p_port, tcp_port = workload.unused_ports(3)
+            cls.source = cls.CkbNode.init_dev_by_port(
+                cls.CkbNodeConfigPath.CURRENT_TEST,
+                f"network_verification/TestRemoteTimeBudgetPeer/source_{rpc_port}",
+                rpc_port,
+                p2p_port,
+            )
+            cls.nodes.append(cls.source)
+            cls.source.prepare()
+            config_path = Path(cls.source.ckb_toml_path)
+            config = toml.loads(config_path.read_text())
+            config["tx_pool"].update(
+                max_tx_verify_time_ms=12_000,
+                max_tx_verify_cycles=1_000_000_000,
+                keep_rejected_tx_hashes_days=1,
+                keep_rejected_tx_hashes_count=1000,
+            )
+            config["rpc"]["tcp_listen_address"] = f"127.0.0.1:{tcp_port}"
+            if "Subscription" not in config["rpc"]["modules"]:
+                config["rpc"]["modules"].append("Subscription")
+            config["logger"]["filter"] = "info,ckb_tx_pool=debug,ckb_relay=trace"
+            config["network"]["connect_outbound_interval_secs"] = 0
+            config_path.write_text(toml.dumps(config))
+            # 创世块加入固定脚本和 8 个 6500 CKB 测试输入。
+            workload.add_genesis_test_cells(cls.source)
+            cls.source.start()
+            cls.started_nodes.append(cls.source)
+            assert cls.source.getClient().tx_pool_info()["tip_number"] == "0x0"
+
+            # 接收节点：1ms 上限，触发网络慢交易超时。预算单位为毫秒，不是 VM cycles。
+            rpc_port, p2p_port, tcp_port = workload.unused_ports(3)
+            cls.receiver = cls.CkbNode.init_dev_by_port(
+                cls.CkbNodeConfigPath.CURRENT_TEST,
+                f"network_verification/TestRemoteTimeBudgetPeer/receiver_{rpc_port}",
+                rpc_port,
+                p2p_port,
+            )
+            cls.nodes.append(cls.receiver)
+            cls.receiver.prepare()
+            config_path = Path(cls.receiver.ckb_toml_path)
+            config = toml.loads(config_path.read_text())
+            config["tx_pool"].update(
+                max_tx_verify_time_ms=1,
+                max_tx_verify_cycles=1_000_000_000,
+                keep_rejected_tx_hashes_days=1,
+                keep_rejected_tx_hashes_count=1000,
+            )
+            config["rpc"]["tcp_listen_address"] = f"127.0.0.1:{tcp_port}"
+            if "Subscription" not in config["rpc"]["modules"]:
+                config["rpc"]["modules"].append("Subscription")
+            config["logger"]["filter"] = "info,ckb_tx_pool=debug,ckb_relay=trace"
+            config["network"]["connect_outbound_interval_secs"] = 0
+            config_path.write_text(toml.dumps(config))
+            # 创世块加入固定脚本和 8 个 6500 CKB 测试输入。
+            workload.add_genesis_test_cells(cls.receiver)
+            cls.receiver.start()
+            cls.started_nodes.append(cls.receiver)
+            assert cls.receiver.getClient().tx_pool_info()["tip_number"] == "0x0"
+
+            # 第二个转发节点：重新发送同一交易，验证可重试。预算单位为毫秒，不是 VM cycles。
+            rpc_port, p2p_port, tcp_port = workload.unused_ports(3)
+            cls.other = cls.CkbNode.init_dev_by_port(
+                cls.CkbNodeConfigPath.CURRENT_TEST,
+                f"network_verification/TestRemoteTimeBudgetPeer/other_{rpc_port}",
+                rpc_port,
+                p2p_port,
+            )
+            cls.nodes.append(cls.other)
+            cls.other.prepare()
+            config_path = Path(cls.other.ckb_toml_path)
+            config = toml.loads(config_path.read_text())
+            config["tx_pool"].update(
+                max_tx_verify_time_ms=12_000,
+                max_tx_verify_cycles=1_000_000_000,
+                keep_rejected_tx_hashes_days=1,
+                keep_rejected_tx_hashes_count=1000,
+            )
+            config["rpc"]["tcp_listen_address"] = f"127.0.0.1:{tcp_port}"
+            if "Subscription" not in config["rpc"]["modules"]:
+                config["rpc"]["modules"].append("Subscription")
+            config["logger"]["filter"] = "info,ckb_tx_pool=debug,ckb_relay=trace"
+            config["network"]["connect_outbound_interval_secs"] = 0
+            config_path.write_text(toml.dumps(config))
+            # 创世块加入固定脚本和 8 个 6500 CKB 测试输入。
+            workload.add_genesis_test_cells(cls.other)
+            cls.other.start()
+            cls.started_nodes.append(cls.other)
+            assert cls.other.getClient().tx_pool_info()["tip_number"] == "0x0"
+
+            # 显式建立共同的 30 块链；此处只传区块，不建立 P2P 连接。
+            cls.Miner.make_tip_height_number(cls.source, 30)
+            workload.sync_blocks(cls.source, cls.receiver, 1, 30)
+            workload.sync_blocks(cls.source, cls.other, 1, 30)
+        except Exception:
+            cls.teardown_class()
+            raise
+
+    @classmethod
+    def teardown_class(cls):
+        for node in reversed(cls.started_nodes):
+            node.stop()
+        for node in cls.nodes:
+            workload.save_node_logs(node)
+            node.clean()
+
     def teardown_method(self, method):
         pass
 
@@ -14,7 +128,7 @@ class TestRemoteTimeBudgetPeer(CkbTest):
     # TEST-MAP: VT2-02
     # TEST-EVIDENCE-BEGIN: VT2-01
     # Evidence | Case: VT2-01 (covered)
-    # Evidence | Setup: Fresh cap=1 receiver on common 30-block dev chain; independent fast genesis input cell=1 has never been validated by receiver.
+    # Evidence | Setup: Fresh cap=1 receiver on common 30-block dev chain; independent fast genesis input cell=1 has never been validated by receiver. Fresh class-owned nodes are explicitly configured and started in TestRemoteTimeBudgetPeer.setup_class; each class has one independent scenario.
     # Evidence | Trigger: Original slow sender sends a distinct fast transaction through ordinary real-node relay after the slow refusal/re-request.
     # Evidence | Observe: Receiver pending/proposed with exact full body and fixed537 cycles in both RPC and verbose pool; original source peer remains connected.
     # Evidence | Assert: assert response["tx_status"]["status"] in ("pending", "proposed"), response
@@ -23,16 +137,16 @@ class TestRemoteTimeBudgetPeer(CkbTest):
     # Evidence | Assert: assert int(response["cycles"], 16) == cycles
     # Evidence | Assert: assert int(owners(client)[tx_hash]["cycles"], 16) == cycles
     # Evidence | Assert: assert any(
-    # Evidence |                 peer["node_id"] == source.get_peer_id()
-    # Evidence |                 for peer in receiver.getClient().get_peers()
-    # Evidence |             )
+    # Evidence |             peer["node_id"] == source.get_peer_id()
+    # Evidence |             for peer in receiver.getClient().get_peers()
+    # Evidence |         )
     # Evidence | Assert: assert receiver.getClient().get_banned_addresses() == []
     # Evidence | Limit: Honest node relay supplies truthful cycles; no malformed packet or exact CPU-time threshold is claimed.
-    # Evidence | Limit: Static coverage only; final frozen full run was not supplied and no per-Case pass is inferred.
+    # Evidence | Limit: Coverage is static; this B lifecycle review does not establish current real-node per-Case execution outcomes.
     # TEST-EVIDENCE-END: VT2-01
     # TEST-EVIDENCE-BEGIN: VT2-02
     # Evidence | Case: VT2-02 (covered)
-    # Evidence | Setup: Valid64-group slow transaction at fixed135598681 cycles; below1e9 configured verification cycles and1e10 block cycles. Fresh low-cap receiver.
+    # Evidence | Setup: Valid64-group slow transaction at fixed135598681 cycles; below1e9 configured verification cycles and1e10 block cycles. Fresh low-cap receiver. Fresh class-owned nodes are explicitly configured and started in TestRemoteTimeBudgetPeer.setup_class; each class has one independent scenario.
     # Evidence | Trigger: Original source locally admits and relays slow bytes; independent ordinary peer reannounces same hash/bytes; original source subsequently relays independent fast input.
     # Evidence | Observe: Hash-specific CPU-budget log, increased real GetRelayTransactions count, repeated unknown/nonmember/no-ban state, and successful original-peer fast admission.
     # Evidence | Assert: wait_for(
@@ -53,14 +167,14 @@ class TestRemoteTimeBudgetPeer(CkbTest):
     # Evidence |         45,
     # Evidence |     )
     # Evidence | Assert: assert any(
-    # Evidence |                 peer["node_id"] == source.get_peer_id()
-    # Evidence |                 for peer in receiver.getClient().get_peers()
-    # Evidence |             )
+    # Evidence |             peer["node_id"] == source.get_peer_id()
+    # Evidence |             for peer in receiver.getClient().get_peers()
+    # Evidence |         )
     # Evidence | Assert: assert receiver.getClient().get_banned_addresses() == []
     # Evidence | Assert: assert (
-    # Evidence |                 receiver.getClient().get_transaction(tx_hash)["tx_status"]["status"]
-    # Evidence |                 == "unknown"
-    # Evidence |             )
+    # Evidence |             receiver.getClient().get_transaction(tx_hash)["tx_status"]["status"]
+    # Evidence |             == "unknown"
+    # Evidence |         )
     # Evidence | Assert: assert response["tx_status"]["status"] in ("pending", "proposed"), response
     # Evidence | Assert: assert body.pop("hash") == tx_hash
     # Evidence | Assert: assert body == tx
@@ -68,24 +182,31 @@ class TestRemoteTimeBudgetPeer(CkbTest):
     # Evidence | Assert: assert int(owners(client)[tx_hash]["cycles"], 16) == cycles
     # Evidence | Limit: Request proof comes from sender protocol log, not custom packet capture. Reannouncement uses another peer; fast control uses original sender.
     # Evidence | Limit: Second refusal log precedes some cleanup; the new request already proves release following the first refusal.
-    # Evidence | Limit: Static coverage only; final frozen full run was not supplied and no per-Case pass is inferred.
+    # Evidence | Limit: Coverage is static; this B lifecycle review does not establish current real-node per-Case execution outcomes.
     # TEST-EVIDENCE-END: VT2-02
     def test_remote_timeout_keeps_peer_connected_for_next_valid_transaction(self):
-        with w.nodes(12_000, 1, 12_000) as (source, receiver, other):
-            slow = w.transaction(source, slow=True)
-            tx_hash = w.relay_slow(source, receiver, slow)
-            w.retry_slow(other, receiver, slow, tx_hash)
-            # This new hash uses an independent input and the original peer.
-            fast = w.transaction(source, cell=1)
-            fast_hash = source.getClient().send_transaction(fast)
-            w.accepted(receiver, fast_hash, fast, w.FAST_CYCLES)
-            assert any(
-                peer["node_id"] == source.get_peer_id()
-                for peer in receiver.getClient().get_peers()
-            )
-            assert receiver.getClient().get_banned_addresses() == []
-            assert (
-                receiver.getClient().get_transaction(tx_hash)["tx_status"]["status"]
-                == "unknown"
-            )
+        """
+        1. 发送慢交易，让 1ms 接收节点触发网络验证超时。
+        2. 另一节点重发相同交易，验证接收节点仍会重新请求并验证。
+        3. 原发送节点继续转发快交易，检查成功入池、连接保留且没有封禁。
+        """
+        source = self.source
+        receiver = self.receiver
+        other = self.other
+        slow = workload.transaction(source, slow=True)
+        tx_hash = workload.relay_slow(source, receiver, slow)
+        workload.retry_slow(other, receiver, slow, tx_hash)
+        # This new hash uses an independent input and the original peer.
+        fast = workload.transaction(source, cell=1)
+        fast_hash = source.getClient().send_transaction(fast)
+        workload.accepted(receiver, fast_hash, fast, workload.FAST_CYCLES)
+        assert any(
+            peer["node_id"] == source.get_peer_id()
+            for peer in receiver.getClient().get_peers()
+        )
+        assert receiver.getClient().get_banned_addresses() == []
+        assert (
+            receiver.getClient().get_transaction(tx_hash)["tx_status"]["status"]
+            == "unknown"
+        )
         self.did_pass = True

@@ -31,10 +31,10 @@ PYTHON_CASES = [
     "test_cases/network_verification/test_budget_consensus.py::TestBudgetConsensusIsolation::test_pool_timeout_does_not_reject_independently_mined_valid_block",
     "test_cases/network_verification/test_peer_timeout.py::TestRemoteTimeBudgetPeer::test_remote_timeout_keeps_peer_connected_for_next_valid_transaction",
     "test_cases/network_verification/test_source_budget.py::TestSourceBudget::test_network_refusal_does_not_block_dry_run_or_local_submission",
-    "test_cases/network_verification/test_source_budget.py::TestSourceBudget::test_persisted_slow_transaction_reloads_without_network_budget",
+    "test_cases/network_verification/test_source_budget.py::TestPersistedBudget::test_persisted_slow_transaction_reloads_without_network_budget",
     "test_cases/network_verification/test_recovery_budget.py::TestRecoveryBudget::test_detached_transaction_recovers_after_restart_under_one_ms_cap",
     "test_cases/network_verification/test_budget_rbf.py::TestBudgetReplacement::test_network_timeout_preserves_parent_child_until_same_candidate_local_rbf",
-    "test_cases/network_verification/test_budget_rbf.py::TestBudgetReplacement::test_locally_rejected_slow_transaction_recovers_when_conflict_is_replaced",
+    "test_cases/network_verification/test_budget_rbf.py::TestLocalConflictRecovery::test_locally_rejected_slow_transaction_recovers_when_conflict_is_replaced",
     "test_cases/network_verification/test_cached_context.py::TestCachedContext::test_cached_script_proof_does_not_skip_since_after_truncate",
     # TEST-MAP: VT2-53
     "test_cases/issue/test_4111.py::Test4111::test_output_capacity_exceeding_inputs_is_rejected",

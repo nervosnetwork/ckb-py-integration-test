@@ -11,11 +11,39 @@ import pytest
 
 from framework.basic import CkbTest
 from test_cases.network_verification.runtime import ROOT, binary_dir, requires_target
-from test_cases.network_verification.workload import _ports
+from test_cases.network_verification import workload
 
 
 @requires_target
 class TestCachedContext(CkbTest):
+    @classmethod
+    def setup_class(cls):
+        # 单节点用例：先准备 30 块链，测试方法只处理 since 场景。
+        rpc_port, p2p_port = workload.unused_ports(2)
+        cls.node = cls.CkbNode.init_dev_by_port(
+            cls.CkbNodeConfigPath.CURRENT_TEST,
+            f"network_verification/cached_context/{rpc_port}",
+            rpc_port,
+            p2p_port,
+        )
+        cls.started = False
+        try:
+            cls.node.prepare()
+            shutil.copy2(ROOT / binary_dir() / "ckb", cls.node.ckb_bin_path)
+            cls.node.start()
+            cls.started = True
+            cls.Miner.make_tip_height_number(cls.node, 30)
+        except Exception:
+            cls.teardown_class()
+            raise
+
+    @classmethod
+    def teardown_class(cls):
+        if cls.started:
+            cls.node.stop()
+        workload.save_node_logs(cls.node)
+        cls.node.clean()
+
     def teardown_method(self, method):
         # The focused pytest log is the retained execution record.
         pass
@@ -58,7 +86,7 @@ class TestCachedContext(CkbTest):
     # TEST-MAP: VT2-52
     # TEST-EVIDENCE-BEGIN: VT2-52
     # Evidence | Case: VT2-52 (covered)
-    # Evidence | Setup: Signed absolute-height-since transaction first accepted mature, removed, then chain truncated to still-confirmed funding height.
+    # Evidence | Setup: Signed absolute-height-since transaction first accepted mature, removed, then chain truncated to still-confirmed funding height. The independent node and initial 30-block chain are prepared in TestCachedContext.setup_class.
     # Evidence | Trigger: Both RPC methods reject same bytes while immature; mine back to mature height, preview and resubmit unchanged tx.
     # Evidence | Observe: Immature from both endpoints/empty pool; later equal cycles, same hash and membership.
     # Evidence | Assert: assert tx["inputs"][0]["since"] == hex(since_height)
@@ -70,98 +98,80 @@ class TestCachedContext(CkbTest):
     # Evidence | Assert: assert client.get_tip_block_number() == low_height
     # Evidence | Assert: assert client.get_transaction(split)["tx_status"]["block_hash"] == low_hash
     # Evidence | Assert: with pytest.raises(Exception, match="Immature"):
-    # Evidence |                 client.test_tx_pool_accept(tx, "passthrough")
+    # Evidence |             client.test_tx_pool_accept(tx, "passthrough")
     # Evidence | Assert: with pytest.raises(Exception, match="Immature"):
-    # Evidence |                 client.send_transaction(tx)
+    # Evidence |             client.send_transaction(tx)
     # Evidence | Assert: assert client.get_raw_tx_pool(False) == {"pending": [], "proposed": []}
     # Evidence | Assert: assert client.get_tip_block_number() == high_height
     # Evidence | Assert: assert int(preview["cycles"], 16) == high_cycles
     # Evidence | Assert: assert client.send_transaction(tx) == accepted_hash
     # Evidence | Assert: assert accepted_hash in set(client.get_raw_tx_pool(False)["pending"]) | set(
-    # Evidence |                 client.get_raw_tx_pool(False)["proposed"]
-    # Evidence |             )
+    # Evidence |             client.get_raw_tx_pool(False)["proposed"]
+    # Evidence |         )
     # Evidence | Limit: Extra warm-script/truncate control; no private cache-hit count claimed.
-    # Evidence | Limit: Static coverage only; final frozen full run was not supplied and no per-Case pass is inferred.
+    # Evidence | Limit: Coverage is static; this B lifecycle review does not establish current real-node per-Case execution outcomes.
     # TEST-EVIDENCE-END: VT2-52
     def test_cached_script_proof_does_not_skip_since_after_truncate(self):
-        binary = ROOT / binary_dir() / "ckb"
-        rpc_port, p2p_port = _ports(2)
-        node = self.CkbNode.init_dev_by_port(
-            self.CkbNodeConfigPath.CURRENT_TEST,
-            f"tx_pool/budget_cached_context/{rpc_port}",
-            rpc_port,
-            p2p_port,
+        """
+        1. 先在成熟高度接受带 since 的交易，记录 cycles 后将其移出池。
+        2. 截断到输入已确认但 since 未成熟的高度，检查两个 RPC 都拒绝。
+        3. 再次挖到成熟高度，检查相同交易的 hash/cycles 和入池结果。
+        """
+        node = self.node
+        client = node.getClient()
+        key = self.Config.ACCOUNT_PRIVATE_2
+        address = self.Ckb_cli.util_key_info_by_private_key(key)["address"]["testnet"]
+        fund = self.Ckb_cli.wallet_transfer_by_private_key(
+            key,
+            address,
+            360000,
+            api_url=client.url,
+            fee_rate="1000",
         )
-        node.prepare()
-        shutil.copy2(binary, node.ckb_bin_path)
-        started = False
-        try:
-            node.start()
-            started = True
-            client = node.getClient()
-            self.Miner.make_tip_height_number(node, 30)
-            key = self.Config.ACCOUNT_PRIVATE_2
-            address = self.Ckb_cli.util_key_info_by_private_key(key)["address"][
-                "testnet"
-            ]
-            fund = self.Ckb_cli.wallet_transfer_by_private_key(
-                key,
-                address,
-                360000,
-                api_url=client.url,
-                fee_rate="1000",
-            )
-            self.Miner.miner_until_tx_committed(node, fund)
-            split = self.Tx.send_transfer_self_tx_with_input(
-                [fund],
-                ["0x0"],
-                key,
-                output_count=2,
-                fee=2000,
-                api_url=client.url,
-            )
-            self.Miner.miner_until_tx_committed(node, split)
-            split_status = client.get_transaction(split)["tx_status"]
-            low_height = int(split_status["block_number"], 16)
-            low_hash = split_status["block_hash"]
-            assert client.get_block_hash(hex(low_height)) == low_hash
-
-            high_height = low_height + 6
-            self.Miner.make_tip_height_number(node, high_height)
-            assert client.get_tip_block_number() == high_height
-            tx = self._since_transaction(client, split, key, high_height)
-            accepted_hash = client.send_transaction(tx)
-            high_entry = client.get_raw_tx_pool(True)["pending"][accepted_hash]
-            high_cycles = int(high_entry["cycles"], 16)
-            assert high_cycles > 0
-            assert client.get_transaction(accepted_hash)["tx_status"]["status"] in {
-                "pending",
-                "proposed",
-            }
-            assert client.remove_transaction(accepted_hash) is True
-            assert client.get_raw_tx_pool(False) == {"pending": [], "proposed": []}
-
-            # The same raw transaction and input outpoint retain the semantic
-            # script key; only the tip-dependent absolute since result changes.
-            client.truncate(low_hash)
-            assert client.get_tip_block_number() == low_height
-            assert client.get_transaction(split)["tx_status"]["block_hash"] == low_hash
-            with pytest.raises(Exception, match="Immature"):
-                client.test_tx_pool_accept(tx, "passthrough")
-            with pytest.raises(Exception, match="Immature"):
-                client.send_transaction(tx)
-            assert client.get_raw_tx_pool(False) == {"pending": [], "proposed": []}
-
-            self.Miner.make_tip_height_number(node, high_height)
-            assert client.get_tip_block_number() == high_height
-            preview = client.test_tx_pool_accept(tx, "passthrough")
-            assert int(preview["cycles"], 16) == high_cycles
-            assert client.send_transaction(tx) == accepted_hash
-            assert accepted_hash in set(client.get_raw_tx_pool(False)["pending"]) | set(
-                client.get_raw_tx_pool(False)["proposed"]
-            )
-            self.did_pass = True
-        finally:
-            if started:
-                node.stop()
-            node.clean()
+        self.Miner.miner_until_tx_committed(node, fund)
+        split = self.Tx.send_transfer_self_tx_with_input(
+            [fund],
+            ["0x0"],
+            key,
+            output_count=2,
+            fee=2000,
+            api_url=client.url,
+        )
+        self.Miner.miner_until_tx_committed(node, split)
+        split_status = client.get_transaction(split)["tx_status"]
+        low_height = int(split_status["block_number"], 16)
+        low_hash = split_status["block_hash"]
+        assert client.get_block_hash(hex(low_height)) == low_hash
+        high_height = low_height + 6
+        self.Miner.make_tip_height_number(node, high_height)
+        assert client.get_tip_block_number() == high_height
+        tx = self._since_transaction(client, split, key, high_height)
+        accepted_hash = client.send_transaction(tx)
+        high_entry = client.get_raw_tx_pool(True)["pending"][accepted_hash]
+        high_cycles = int(high_entry["cycles"], 16)
+        assert high_cycles > 0
+        assert client.get_transaction(accepted_hash)["tx_status"]["status"] in {
+            "pending",
+            "proposed",
+        }
+        assert client.remove_transaction(accepted_hash) is True
+        assert client.get_raw_tx_pool(False) == {"pending": [], "proposed": []}
+        # The same raw transaction and input outpoint retain the semantic
+        # script key; only the tip-dependent absolute since result changes.
+        client.truncate(low_hash)
+        assert client.get_tip_block_number() == low_height
+        assert client.get_transaction(split)["tx_status"]["block_hash"] == low_hash
+        with pytest.raises(Exception, match="Immature"):
+            client.test_tx_pool_accept(tx, "passthrough")
+        with pytest.raises(Exception, match="Immature"):
+            client.send_transaction(tx)
+        assert client.get_raw_tx_pool(False) == {"pending": [], "proposed": []}
+        self.Miner.make_tip_height_number(node, high_height)
+        assert client.get_tip_block_number() == high_height
+        preview = client.test_tx_pool_accept(tx, "passthrough")
+        assert int(preview["cycles"], 16) == high_cycles
+        assert client.send_transaction(tx) == accepted_hash
+        assert accepted_hash in set(client.get_raw_tx_pool(False)["pending"]) | set(
+            client.get_raw_tx_pool(False)["proposed"]
+        )
+        self.did_pass = True

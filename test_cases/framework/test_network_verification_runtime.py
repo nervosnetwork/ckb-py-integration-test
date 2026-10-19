@@ -146,7 +146,7 @@ def test_legacy_shell_unsafe_output_path_fails_preflight(inputs, name):
 
 
 def test_restart_requires_old_process_exit_before_start(monkeypatch):
-    from test_cases.network_verification import workload as w
+    from test_cases.network_verification import workload
 
     events = []
 
@@ -157,35 +157,35 @@ def test_restart_requires_old_process_exit_before_start(monkeypatch):
         def start(self):
             events.append("start")
 
-    monkeypatch.setattr(w, "_node_process_id", lambda node: 42)
-    monkeypatch.setattr(w, "_process_exists", lambda pid: True)
+    monkeypatch.setattr(workload, "_node_process_id", lambda node: 42)
+    monkeypatch.setattr(workload, "_process_exists", lambda pid: True)
 
     def immediate_check(predicate, description, timeout):
         assert predicate(), description
 
-    monkeypatch.setattr(w, "wait_for", immediate_check)
+    monkeypatch.setattr(workload, "wait_for", immediate_check)
     with pytest.raises(AssertionError, match="old node PID 42 exited"):
-        w.restart(Node())
+        workload.restart(Node())
     assert events == ["stop"]
 
 
 def test_restart_requires_a_different_listening_pid(monkeypatch):
-    from test_cases.network_verification import workload as w
+    from test_cases.network_verification import workload
     from types import SimpleNamespace
 
     pids = iter([42, None, 42])
-    monkeypatch.setattr(w, "_node_process_id", lambda node: next(pids))
-    monkeypatch.setattr(w, "_process_exists", lambda pid: False)
+    monkeypatch.setattr(workload, "_node_process_id", lambda node: next(pids))
+    monkeypatch.setattr(workload, "_process_exists", lambda pid: False)
 
     def immediate_check(predicate, description, timeout):
         result = predicate()
         assert result, description
         return result
 
-    monkeypatch.setattr(w, "wait_for", immediate_check)
+    monkeypatch.setattr(workload, "wait_for", immediate_check)
     node = SimpleNamespace(stop=lambda: None, start=lambda: None)
     with pytest.raises(AssertionError):
-        w.restart(node)
+        workload.restart(node)
 
 
 def test_alternate_checkout_name_fails_preflight(inputs, monkeypatch):

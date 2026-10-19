@@ -67,7 +67,7 @@ class TestCkbCliMultisig203(CkbTest):
     # Evidence |         f"miner 100 block ,but tx_response always pending:{tx_hash}，tx_response:{tx_response}"
     # Evidence |     )
     # Evidence | Limit: Representative creation hash rule only, not complete Type ID update/destroy matrix.
-    # Evidence | Limit: Static coverage only; final frozen full run was not supplied and no per-Case pass is inferred.
+    # Evidence | Limit: Coverage is static; this B lifecycle review does not establish current real-node per-Case execution outcomes.
     # TEST-EVIDENCE-END: VT2-27
     def test_01_dep_groups_enable_type_id_true(self):
         # 1. deploy contract return deploy tx hash

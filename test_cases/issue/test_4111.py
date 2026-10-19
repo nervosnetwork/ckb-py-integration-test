@@ -59,7 +59,7 @@ class Test4111(CkbTest):
     # Evidence | Assert: assert int(result["cycles"], 16) == int(preview["cycles"], 16) > 0
     # Evidence | Assert: assert tx_hash in client.get_raw_tx_pool(False)["pending"]
     # Evidence | Limit: Intended public fee precheck, not later contextual OutputsSumOverflow.
-    # Evidence | Limit: Static coverage only; final frozen full run was not supplied and no per-Case pass is inferred.
+    # Evidence | Limit: Coverage is static; this B lifecycle review does not establish current real-node per-Case execution outcomes.
     # TEST-EVIDENCE-END: VT2-53
     def test_output_capacity_exceeding_inputs_is_rejected(self):
         import requests

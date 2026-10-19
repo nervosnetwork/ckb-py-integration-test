@@ -79,3 +79,15 @@ wait for the old PID to exit, then require a different listening PID. Other
 existing node helpers use startup sleeps and port-based shutdown; ordinary RPCs
 have no per-call timeout,
 so the outer process-group watchdog remains the hard bound.
+
+## Test readability and lifecycle
+
+Each stateful scenario owns fresh nodes in its class's `setup_class` and stops
+and cleans them in `teardown_class`, following the existing project style.
+Node roles, `max_tx_verify_time_ms` (milliseconds), cycle limits, startup, and
+the common 30-block chain are written directly in each class. Independent
+persistence and local-RBF scenarios use separate classes so their pools and
+chains cannot leak into one another. Test methods keep the original transaction
+steps and assertions; `workload` retains only shared transaction/assertion,
+fixed-genesis-data, log-copy and verified-restart utilities, not a node-lifecycle
+context manager.

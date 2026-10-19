@@ -11,12 +11,10 @@ import shutil
 import socket
 import subprocess
 import time
-from contextlib import contextmanager
 from pathlib import Path
 
 import toml
 
-from framework.basic import CkbTest
 from test_cases.network_verification.runtime import script_path
 
 CKB = 100_000_000
@@ -35,7 +33,7 @@ def wait_for(predicate, description, timeout=30):
     raise AssertionError(f"{description}; last observation: {last!r}")
 
 
-def _ports(count):
+def unused_ports(count):
     sockets = [socket.socket() for _ in range(count)]
     try:
         for sock in sockets:
@@ -122,22 +120,8 @@ def restart(node, cap=None):
     print(f"cold restart: old PID {previous} exited; new PID {current}")
 
 
-def prepare_node(cap, label, program_names=()):
-    rpc, p2p, tcp = _ports(3)
-    node = CkbTest.CkbNode.init_dev_by_port(
-        CkbTest.CkbNodeConfigPath.CURRENT_TEST,
-        f"tx_pool/network_budget/{label}_{rpc}",
-        rpc,
-        p2p,
-    )
-    node.prepare()
-    config_path = Path(node.ckb_toml_path)
-    config = toml.loads(config_path.read_text())
-    config["rpc"]["tcp_listen_address"] = f"127.0.0.1:{tcp}"
-    if "Subscription" not in config["rpc"]["modules"]:
-        config["rpc"]["modules"].append("Subscription")
-    config_path.write_text(toml.dumps(config))
-    set_budget(node, cap)
+def add_genesis_test_cells(node, *, program_names=()):
+    """Only add fixed scripts and eight 6500-CKB inputs; never start/configure nodes."""
     programs = {
         name: script_path(name)
         for name in ("always_success", "current_cycles", *program_names)
@@ -157,37 +141,18 @@ def prepare_node(cap, label, program_names=()):
         [{"capacity": 6500 * CKB, "lock": lock.copy()} for _ in range(8)]
     )
     spec_path.write_text(toml.dumps(spec))
-    return node
 
 
-@contextmanager
-def nodes(*caps, program_names=()):
-    prepared, started = [], []
-    try:
-        for index, cap in enumerate(caps):
-            node = prepare_node(cap, str(index), program_names)
-            prepared.append(node)
-            node.start()
-            started.append(node)
-            assert node.getClient().tx_pool_info()["tip_number"] == "0x0"
-        CkbTest.Miner.make_tip_height_number(prepared[0], 30)
-        for node in prepared[1:]:
-            sync_blocks(prepared[0], node, 1, 30)
-        yield prepared
-    finally:
-        for node in reversed(started):
-            node.stop()
-        for node in prepared:
-            if os.environ.get("CKB_TEST_NODE_LOG_DIR"):
-                directory = (
-                    Path(os.environ["CKB_TEST_NODE_LOG_DIR"]) / Path(node.ckb_dir).name
-                )
-                directory.mkdir(parents=True, exist_ok=True)
-                for name in ("node.log", "ckb.toml", "dev.toml"):
-                    path = Path(node.ckb_dir) / name
-                    if path.is_file():
-                        shutil.copyfile(path, directory / name)
-            node.clean()
+def save_node_logs(node):
+    """Copy logs/configs only; callers explicitly stop and clean their nodes."""
+    if not os.environ.get("CKB_TEST_NODE_LOG_DIR"):
+        return
+    directory = Path(os.environ["CKB_TEST_NODE_LOG_DIR"]) / Path(node.ckb_dir).name
+    directory.mkdir(parents=True, exist_ok=True)
+    for name in ("node.log", "ckb.toml", "dev.toml"):
+        path = Path(node.ckb_dir) / name
+        if path.is_file():
+            shutil.copyfile(path, directory / name)
 
 
 def sync_blocks(source, destination, first_height, last_height):
