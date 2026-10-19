@@ -2,7 +2,6 @@ import pytest
 
 from framework.helper import miner
 
-
 COMMITTED_RESPONSE = {"tx_status": {"status": "committed"}}
 
 
@@ -62,3 +61,43 @@ def test_wait_for_indexer_reports_last_tip_on_timeout(monkeypatch):
         match="target height 12.*last indexer tip: 0xb",
     ):
         miner.wait_for_indexer(FakeNode(client), 12, timeout=1)
+
+
+@pytest.mark.parametrize("with_uncles", [False, True], ids=["empty", "uncle-proposals"])
+def test_block_template_preserves_uncle_proposals(monkeypatch, with_uncles):
+    monkeypatch.setattr(miner, "get_hex_timestamp", lambda: "0x1234")
+    expected_uncles = (
+        [
+            {"header": {"number": "0x1"}, "proposals": ["0x" + "11" * 10]},
+            {"header": {"number": "0x2"}, "proposals": []},
+        ]
+        if with_uncles
+        else []
+    )
+    cellbase = {"witnesses": ["0x00"]}
+    transaction = {"witnesses": ["0x01"]}
+    template = {
+        "compact_target": "0x20010000",
+        "dao": "0x" + "00" * 32,
+        "epoch": "0x0",
+        "number": "0x3",
+        "parent_hash": "0x" + "22" * 32,
+        "extension": "0x1234",
+        "cellbase": {"data": cellbase},
+        "transactions": [{"data": transaction}],
+        # The assembler omits IDs already included in the selected uncles.
+        "proposals": [],
+        "uncles": [
+            {**uncle, "hash": "0x" + "33" * 32, "required": False}
+            for uncle in expected_uncles
+        ],
+    }
+
+    block = miner.block_template_transfer_to_submit_block(template, "0x1")
+
+    assert block["uncles"] == expected_uncles
+    assert block["proposals"] == []
+    assert block["transactions"] == [cellbase, transaction]
+    assert block["extension"] == "0x1234"
+    assert block["header"]["version"] == "0x1"
+    assert block["header"]["timestamp"] == "0x1234"
