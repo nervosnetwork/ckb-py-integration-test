@@ -23,18 +23,19 @@ class TestTxPoolConfigCompatibility(CkbTest):
     # TEST-MAP: VT2-32
     # TEST-EVIDENCE-BEGIN: VT2-32
     # Evidence | Case: VT2-32 (covered)
-    # Evidence | Setup: Use PRODUCTION_BIN_DIR (default project-relative download/production) with its production CKB/CLI; normal configuration has no budget fields. No manifest or executable-hash comparison is performed. Preparation, process launch, RPC readiness and try/finally cleanup are now explicit in this test method; no custom contextmanager is involved.
-    # Evidence | Trigger: Start ordinary config and query tx_pool_info; separately run production with each of three internal fields.
-    # Evidence | Observe: Baseline RPC tip0 available; each field causes nonzero process exit and exact unknown-field diagnostic.
+    # Evidence | Setup: Use PRODUCTION_BIN_DIR (default download/production) and the existing template in a fresh directory with unused RPC/P2P ports; assert all three internal fields are absent from ordinary tx_pool config. For normal starts, node.start() owns version reporting, background launch and node.log. The test begins its retained 20-second RPC-readiness deadline after start() returns. Finally node.stop() then node.clean() use the framework lifecycle.
+    # Evidence | Trigger: Start ordinary config with node.start() and query tx_pool_info; independently inject each of max_tx_verify_time_ms, min_tx_verify_time_ms and cycles_per_ms and run the unchanged subprocess.run rejection path with timeout=10.
+    # Evidence | Observe: Ordinary RPC returns genesis tip 0x0. Each invalid production config exits nonzero with its exact unknown-field diagnostic; this proves rejected-process startup, not a separately sampled RPC-port closure.
     # Evidence | Assert: assert info["tip_number"] == "0x0"
     # Evidence | Assert: raise AssertionError(
-    # Evidence |                             "node did not expose tx_pool_info within 20 seconds"
-    # Evidence |                         )
+    # Evidence |                     "node did not expose tx_pool_info within 20 seconds"
+    # Evidence |                 )
     # Evidence | Assert: assert field not in config["tx_pool"]
     # Evidence | Assert: assert result.returncode != 0, f"{field} unexpectedly started node"
     # Evidence | Assert: assert f"unknown field `{field}`" in output, output[-1500:]
-    # Evidence | Limit: Fields loop within one method. Binary hash/distinctness/preflight and source-revision attestation are no longer suite checks; caller supplies the two builds and their provenance. Actual production/test configuration behavior remains asserted.
-    # Evidence | Limit: Static coverage only; this readability review does not establish current real-node per-Case outcomes.
+    # Evidence | Limit: This changes failure handling: custom process.poll(), early exit/log-tail errors, terminate()/wait(10)/kill()/wait(10), and config-run.log are removed. Native start sleeps 1 second and 3 seconds plus run_command's 1-second background-launch sleep; native stop kills the RPC-port listener and sleeps 3 seconds without a process-exit assertion, then clean removes the node directory. The readiness deadline excludes start(). A stop exception can prevent the subsequent clean call; shutdown equivalence is not claimed.
+    # Evidence | Limit: Production/test build provenance and binary distinctness are caller inputs, not test assertions. This review assumes DOCKER is unset and the supplied build directories contain the intended local binaries. Unknown-field rows assert exit/diagnostic, not an additional RPC socket check. Fields are loop iterations, not separately parameterized selectors.
+    # Evidence | Limit: Static semantic review plus three-selector collection only; no real-node execution or per-Case pass result was produced by this review. Reviewer isolation is isolation_unverified.
     # TEST-EVIDENCE-END: VT2-32
     def test_production_rejects_test_only_budget_fields(self):
         production = PRODUCTION_BIN_DIR
@@ -54,66 +55,39 @@ class TestTxPoolConfigCompatibility(CkbTest):
             p2p_port,
         )
         node.prepare()
-        version = subprocess.run(
-            [node.ckb_bin_path, "--version"], text=True, capture_output=True, check=True
-        ).stdout.strip()
-        print(
-            f"config case production_defaults: binary_dir={base.ckb_bin_path}, {version}"
-        )
         path = Path(node.ckb_toml_path)
         config = toml.loads(path.read_text())
         path.write_text(toml.dumps(config))
-        log_path = Path(node.ckb_dir) / "config-run.log"
         try:
-            with log_path.open("w") as log:
-                process = subprocess.Popen(
-                    [node.ckb_bin_path, "run", "--indexer", "--skip-spec-check"],
-                    cwd=node.ckb_dir,
-                    stdout=log,
-                    stderr=subprocess.STDOUT,
-                )
+            node.start()
+            deadline = time.monotonic() + 20
+            while time.monotonic() < deadline:
                 try:
-                    deadline = time.monotonic() + 20
-                    while time.monotonic() < deadline:
-                        if process.poll() is not None:
-                            raise AssertionError(
-                                f"node exited {process.returncode}: "
-                                f"{log_path.read_text(errors='replace')[-1500:]}"
-                            )
-                        try:
-                            info = node.getClient().call(
-                                "tx_pool_info",
-                                [],
-                                try_count=1,
-                                timeout=1,
-                                verbose=False,
-                            )
-                        except Exception:
-                            time.sleep(0.25)
-                            continue
-                        assert info["tip_number"] == "0x0"
-                        break
-                    else:
-                        raise AssertionError(
-                            "node did not expose tx_pool_info within 20 seconds"
-                        )
-                    # 2. 启动并等待 RPC 就绪后，验证生产默认配置不含测试字段。
-                    for field in (
-                        "max_tx_verify_time_ms",
-                        "min_tx_verify_time_ms",
-                        "cycles_per_ms",
-                    ):
-                        assert field not in config["tx_pool"]
-                finally:
-                    # 3. 无论断言是否通过，先结束进程，再关闭日志并清理目录。
-                    if process.poll() is None:
-                        process.terminate()
-                        try:
-                            process.wait(timeout=10)
-                        except subprocess.TimeoutExpired:
-                            process.kill()
-                            process.wait(timeout=10)
+                    info = node.getClient().call(
+                        "tx_pool_info",
+                        [],
+                        try_count=1,
+                        timeout=1,
+                        verbose=False,
+                    )
+                except Exception:
+                    time.sleep(0.25)
+                    continue
+                assert info["tip_number"] == "0x0"
+                break
+            else:
+                raise AssertionError(
+                    "node did not expose tx_pool_info within 20 seconds"
+                )
+            # 默认配置不含测试专用字段。
+            for field in (
+                "max_tx_verify_time_ms",
+                "min_tx_verify_time_ms",
+                "cycles_per_ms",
+            ):
+                assert field not in config["tx_pool"]
         finally:
+            node.stop()
             node.clean()
         for field in (
             "max_tx_verify_time_ms",
@@ -168,10 +142,13 @@ class TestTxPoolConfigCompatibility(CkbTest):
     # TEST-MAP: VT2-33
     # TEST-EVIDENCE-BEGIN: VT2-33
     # Evidence | Case: VT2-33 (covered)
-    # Evidence | Setup: Existing CURRENT_TEST selects download/current test-feature CKB/CLI; separate node directories/ports for default,1,12000,0,-1,4294967296 plus two unexposed fields. Preparation, process launch, RPC readiness and try/finally cleanup are now explicit in this test method; no custom contextmanager is involved.
-    # Evidence | Trigger: Actual startup for allowed values; bounded subprocess rejection for invalid values and fields.
-    # Evidence | Observe: Allowed RPC readiness; invalid nonzero exits identify field/range and closed RPC port; unsupported fields report unknown-field.
+    # Evidence | Setup: Use CURRENT_TEST (download/current) with fresh directories/ports for default config and max_tx_verify_time_ms=1/12000. For normal starts, node.start() owns version reporting, background launch and node.log. The test begins its retained 20-second RPC-readiness deadline after start() returns. Finally node.stop() then node.clean() use the framework lifecycle.
+    # Evidence | Trigger: Start each allowed configuration via node.start(); preserve subprocess.run for 0, -1, 4294967296 (15-second timeout) and unsupported min_tx_verify_time_ms/cycles_per_ms (10-second timeout).
+    # Evidence | Observe: Allowed values expose tx_pool_info at genesis and an empty pending pool. Invalid values exit nonzero, identify max_tx_verify_time_ms and range/nonzero failure, and leave the RPC socket closed. Unsupported fields exit nonzero with the exact unknown-field diagnostic.
     # Evidence | Assert: assert info["tip_number"] == "0x0"
+    # Evidence | Assert: raise AssertionError(
+    # Evidence |                         "node did not expose tx_pool_info within 20 seconds"
+    # Evidence |                     )
     # Evidence | Assert: assert node.getClient().tx_pool_info()["pending"] == "0x0"
     # Evidence | Assert: assert result.returncode != 0, output
     # Evidence | Assert: assert "max_tx_verify_time_ms" in output, output
@@ -187,9 +164,10 @@ class TestTxPoolConfigCompatibility(CkbTest):
     # Evidence |                     )
     # Evidence | Assert: assert result.returncode != 0, f"{field} unexpectedly started node"
     # Evidence | Assert: assert f"unknown field `{field}`" in output, output[-1500:]
-    # Evidence | Limit: Both selector methods must run; neither alone completes the Case.
-    # Evidence | Limit: Static coverage only; this readability review does not establish current real-node per-Case outcomes.
-    # Evidence | Limit: The budget-change control now uses the same verified cold process boundary as persistence/reorg tests.
+    # Evidence | Limit: This changes failure handling: custom process.poll(), early exit/log-tail errors, terminate()/wait(10)/kill()/wait(10), and config-run.log are removed. Native start sleeps 1 second and 3 seconds plus run_command's 1-second background-launch sleep; native stop kills the RPC-port listener and sleeps 3 seconds without a process-exit assertion, then clean removes the node directory. The readiness deadline excludes start(). A stop exception can prevent the subsequent clean call; shutdown equivalence is not claimed.
+    # Evidence | Limit: Both configuration and retry selectors jointly establish this Case; neither alone covers it. Loop values are not individual pytest parameter selectors. The unchanged retry binding retains its owned-PID cold-process verification; that verification is not present in normal configuration startup/cleanup.
+    # Evidence | Limit: This finite workload demonstrates the 1ms rejection/12000ms acceptance contrast; it does not measure the exact CPU boundary, all positive u32 values, or the 8000ms default. Test-feature binary provenance remains a caller input, and DOCKER must be unset for the reviewed local-build path. The low-cap helper samples state after the matching refusal log; it does not establish indefinite later state.
+    # Evidence | Limit: Static semantic review plus three-selector collection only; no real-node execution or per-Case pass result was produced by this review. Reviewer isolation is isolation_unverified.
     # TEST-EVIDENCE-END: VT2-33
     def test_budget_configuration_bounds(self):
         """Real startup matrix; test_budget_retry checks the 1ms/12000ms workload."""
@@ -205,61 +183,34 @@ class TestTxPoolConfigCompatibility(CkbTest):
                 base, f"tx_pool/budget_config/{label}_{rpc_port}", rpc_port, p2p_port
             )
             node.prepare()
-            version = subprocess.run(
-                [node.ckb_bin_path, "--version"],
-                text=True,
-                capture_output=True,
-                check=True,
-            ).stdout.strip()
-            print(f"config case {label}: binary_dir={base.ckb_bin_path}, {version}")
             path = Path(node.ckb_toml_path)
             config = toml.loads(path.read_text())
             config["tx_pool"].update(fields)
             path.write_text(toml.dumps(config))
-            log_path = Path(node.ckb_dir) / "config-run.log"
             try:
-                with log_path.open("w") as log:
-                    process = subprocess.Popen(
-                        [node.ckb_bin_path, "run", "--indexer", "--skip-spec-check"],
-                        cwd=node.ckb_dir,
-                        stdout=log,
-                        stderr=subprocess.STDOUT,
-                    )
+                node.start()
+                deadline = time.monotonic() + 20
+                while time.monotonic() < deadline:
                     try:
-                        deadline = time.monotonic() + 20
-                        while time.monotonic() < deadline:
-                            if process.poll() is not None:
-                                raise AssertionError(
-                                    f"node exited {process.returncode}: "
-                                    f"{log_path.read_text(errors='replace')[-1500:]}"
-                                )
-                            try:
-                                info = node.getClient().call(
-                                    "tx_pool_info",
-                                    [],
-                                    try_count=1,
-                                    timeout=1,
-                                    verbose=False,
-                                )
-                            except Exception:
-                                time.sleep(0.25)
-                                continue
-                            assert info["tip_number"] == "0x0"
-                            break
-                        else:
-                            raise AssertionError(
-                                "node did not expose tx_pool_info within 20 seconds"
-                            )
-                        assert node.getClient().tx_pool_info()["pending"] == "0x0"
-                    finally:
-                        if process.poll() is None:
-                            process.terminate()
-                            try:
-                                process.wait(timeout=10)
-                            except subprocess.TimeoutExpired:
-                                process.kill()
-                                process.wait(timeout=10)
+                        info = node.getClient().call(
+                            "tx_pool_info",
+                            [],
+                            try_count=1,
+                            timeout=1,
+                            verbose=False,
+                        )
+                    except Exception:
+                        time.sleep(0.25)
+                        continue
+                    assert info["tip_number"] == "0x0"
+                    break
+                else:
+                    raise AssertionError(
+                        "node did not expose tx_pool_info within 20 seconds"
+                    )
+                assert node.getClient().tx_pool_info()["pending"] == "0x0"
             finally:
+                node.stop()
                 node.clean()
         for value in (0, -1, 4_294_967_296):
             rpc_port, p2p_port = workload.unused_ports(2)
