@@ -10,9 +10,11 @@ from pathlib import Path
 import requests
 import toml
 
+import pytest
+
 from framework.basic import CkbTest
 
-from test_cases.network_verification.runtime import requires_target
+from test_cases.network_verification.runtime import requires_test_feature
 from test_cases.network_verification import workload
 
 
@@ -61,7 +63,8 @@ class RejectionSubscription:
         return json.loads(result) if isinstance(result, str) else result
 
 
-@requires_target
+@pytest.mark.network_verification
+@requires_test_feature
 class TestBudgetReplacement(CkbTest):
     @classmethod
     def setup_class(cls):
@@ -200,7 +203,7 @@ class TestBudgetReplacement(CkbTest):
     # Evidence |         45,
     # Evidence |     )
     # Evidence | Limit: Finite negative window plus positive same-stream barrier; no proof of private TryFrom execution or arbitrarily delayed event absence.
-    # Evidence | Limit: Coverage is static; this B lifecycle review does not establish current real-node per-Case execution outcomes.
+    # Evidence | Limit: Coverage is static; this native-pytest review does not establish current real-node per-Case outcomes.
     # TEST-EVIDENCE-END: VT2-29
     # TEST-EVIDENCE-BEGIN: VT2-48
     # Evidence | Case: VT2-48 (covered)
@@ -243,7 +246,7 @@ class TestBudgetReplacement(CkbTest):
     # Evidence | Assert: assert int(response["cycles"], 16) == cycles
     # Evidence | Assert: assert int(owners(client)[tx_hash]["cycles"], 16) == cycles
     # Evidence | Limit: Public pool-state protection, not private spend-owner map.
-    # Evidence | Limit: Coverage is static; this B lifecycle review does not establish current real-node per-Case execution outcomes.
+    # Evidence | Limit: Coverage is static; this native-pytest review does not establish current real-node per-Case outcomes.
     # TEST-EVIDENCE-END: VT2-48
     def test_network_timeout_preserves_parent_child_until_same_candidate_local_rbf(
         self,
@@ -319,7 +322,8 @@ class TestBudgetReplacement(CkbTest):
         self.did_pass = True
 
 
-@requires_target
+@pytest.mark.network_verification
+@requires_test_feature
 class TestLocalConflictRecovery(CkbTest):
     @classmethod
     def setup_class(cls):
@@ -435,7 +439,7 @@ class TestLocalConflictRecovery(CkbTest):
     # Evidence | Assert: assert client.get_banned_addresses() == []
     # Evidence | Assert: assert node.get_connected_count() >= 1
     # Evidence | Limit: Public automatic recovery with no-resubmit/no-peer control; private queue/cache internals not observed.
-    # Evidence | Limit: Coverage is static; this B lifecycle review does not establish current real-node per-Case execution outcomes.
+    # Evidence | Limit: Coverage is static; this native-pytest review does not establish current real-node per-Case outcomes.
     # TEST-EVIDENCE-END: VT2-45
     def test_locally_rejected_slow_transaction_recovers_when_conflict_is_replaced(self):
         """

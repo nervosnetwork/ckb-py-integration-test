@@ -2,7 +2,6 @@
 
 import json
 import os
-import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -10,11 +9,12 @@ from pathlib import Path
 import pytest
 
 from framework.basic import CkbTest
-from test_cases.network_verification.runtime import ROOT, binary_dir, requires_target
+from test_cases.network_verification.runtime import requires_test_feature
 from test_cases.network_verification import workload
 
 
-@requires_target
+@pytest.mark.network_verification
+@requires_test_feature
 class TestCachedContext(CkbTest):
     @classmethod
     def setup_class(cls):
@@ -29,7 +29,6 @@ class TestCachedContext(CkbTest):
         cls.started = False
         try:
             cls.node.prepare()
-            shutil.copy2(ROOT / binary_dir() / "ckb", cls.node.ckb_bin_path)
             cls.node.start()
             cls.started = True
             cls.Miner.make_tip_height_number(cls.node, 30)
@@ -86,7 +85,7 @@ class TestCachedContext(CkbTest):
     # TEST-MAP: VT2-52
     # TEST-EVIDENCE-BEGIN: VT2-52
     # Evidence | Case: VT2-52 (covered)
-    # Evidence | Setup: Signed absolute-height-since transaction first accepted mature, removed, then chain truncated to still-confirmed funding height. The independent node and initial 30-block chain are prepared in TestCachedContext.setup_class.
+    # Evidence | Setup: Signed absolute-height-since transaction first accepted mature, removed, then chain truncated to still-confirmed funding height. The independent node and initial 30-block chain are prepared in TestCachedContext.setup_class. node.prepare uses existing CURRENT_TEST/download/current directly; the redundant manifest-selected binary copy is removed.
     # Evidence | Trigger: Both RPC methods reject same bytes while immature; mine back to mature height, preview and resubmit unchanged tx.
     # Evidence | Observe: Immature from both endpoints/empty pool; later equal cycles, same hash and membership.
     # Evidence | Assert: assert tx["inputs"][0]["since"] == hex(since_height)
@@ -109,7 +108,7 @@ class TestCachedContext(CkbTest):
     # Evidence |             client.get_raw_tx_pool(False)["proposed"]
     # Evidence |         )
     # Evidence | Limit: Extra warm-script/truncate control; no private cache-hit count claimed.
-    # Evidence | Limit: Coverage is static; this B lifecycle review does not establish current real-node per-Case execution outcomes.
+    # Evidence | Limit: Coverage is static; this native-pytest review does not establish current real-node per-Case outcomes.
     # TEST-EVIDENCE-END: VT2-52
     def test_cached_script_proof_does_not_skip_since_after_truncate(self):
         """

@@ -2,15 +2,18 @@
 
 import copy
 
+import pytest
+
 from framework.basic import CkbTest
 from pathlib import Path
 import toml
-from test_cases.network_verification.runtime import requires_target
+from test_cases.network_verification.runtime import requires_test_feature
 from test_cases.network_verification import workload
 from test_cases.tx_pool_refactor.dao_precheck.support import transaction_hash
 
 
-@requires_target
+@pytest.mark.network_verification
+@requires_test_feature
 class TestSourceBudget(CkbTest):
     @classmethod
     def setup_class(cls):
@@ -123,7 +126,7 @@ class TestSourceBudget(CkbTest):
     # Evidence | Assert: assert int(response["cycles"], 16) == cycles
     # Evidence | Assert: assert int(owners(client)[tx_hash]["cycles"], 16) == cycles
     # Evidence | Limit: Combined with VT2-07 setup; preceding dry-run does not invalidate the oracle because subsequent remote refusal explicitly occurs.
-    # Evidence | Limit: Coverage is static; this B lifecycle review does not establish current real-node per-Case execution outcomes.
+    # Evidence | Limit: Coverage is static; this native-pytest review does not establish current real-node per-Case outcomes.
     # TEST-EVIDENCE-END: VT2-06
     # TEST-EVIDENCE-BEGIN: VT2-07
     # Evidence | Case: VT2-07 (covered)
@@ -157,7 +160,7 @@ class TestSourceBudget(CkbTest):
     # Evidence | Assert: assert int(response["cycles"], 16) == cycles
     # Evidence | Assert: assert int(owners(client)[tx_hash]["cycles"], 16) == cycles
     # Evidence | Limit: Proves no observable dry-run cache bypass, not private VM-call/cache counters.
-    # Evidence | Limit: Coverage is static; this B lifecycle review does not establish current real-node per-Case execution outcomes.
+    # Evidence | Limit: Coverage is static; this native-pytest review does not establish current real-node per-Case outcomes.
     # TEST-EVIDENCE-END: VT2-07
     def test_network_refusal_does_not_block_dry_run_or_local_submission(self):
         """
@@ -206,7 +209,8 @@ class TestSourceBudget(CkbTest):
         self.did_pass = True
 
 
-@requires_target
+@pytest.mark.network_verification
+@requires_test_feature
 class TestPersistedBudget(CkbTest):
     @classmethod
     def setup_class(cls):
@@ -321,7 +325,7 @@ class TestPersistedBudget(CkbTest):
     # Evidence | Assert: current = wait_for(lambda: _node_process_id(node), "restarted node listening", 20)
     # Evidence | Assert: assert current != previous, (previous, current)
     # Evidence | Limit: Restart ownership uses lsof PID/cwd checks and a bounded disappearance wait, not a retained subprocess handle; failure to terminate or identify the process fails the test. Exact graceful-exit status is not recorded, but old in-memory state cannot satisfy the post-boundary pool oracle.
-    # Evidence | Limit: Coverage is static; this B lifecycle review does not establish current real-node per-Case execution outcomes.
+    # Evidence | Limit: Coverage is static; this native-pytest review does not establish current real-node per-Case outcomes.
     # TEST-EVIDENCE-END: VT2-09
     def test_persisted_slow_transaction_reloads_without_network_budget(self):
         """

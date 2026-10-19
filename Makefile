@@ -30,6 +30,7 @@ test_cases := \
     test_cases/contracts \
     test_cases/example \
     test_cases/framework \
+    test_cases/network_verification \
     test_cases/light_client \
     test_cases/mocking \
     test_cases/node_compatible \

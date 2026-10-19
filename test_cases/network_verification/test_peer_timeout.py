@@ -1,13 +1,16 @@
 """Real node relay: retryable budget refusal and subsequent peer usefulness."""
 
+import pytest
+
 from framework.basic import CkbTest
 from pathlib import Path
 import toml
-from test_cases.network_verification.runtime import requires_target
+from test_cases.network_verification.runtime import requires_test_feature
 from test_cases.network_verification import workload
 
 
-@requires_target
+@pytest.mark.network_verification
+@requires_test_feature
 class TestRemoteTimeBudgetPeer(CkbTest):
     @classmethod
     def setup_class(cls):
@@ -142,7 +145,7 @@ class TestRemoteTimeBudgetPeer(CkbTest):
     # Evidence |         )
     # Evidence | Assert: assert receiver.getClient().get_banned_addresses() == []
     # Evidence | Limit: Honest node relay supplies truthful cycles; no malformed packet or exact CPU-time threshold is claimed.
-    # Evidence | Limit: Coverage is static; this B lifecycle review does not establish current real-node per-Case execution outcomes.
+    # Evidence | Limit: Coverage is static; this native-pytest review does not establish current real-node per-Case outcomes.
     # TEST-EVIDENCE-END: VT2-01
     # TEST-EVIDENCE-BEGIN: VT2-02
     # Evidence | Case: VT2-02 (covered)
@@ -182,7 +185,7 @@ class TestRemoteTimeBudgetPeer(CkbTest):
     # Evidence | Assert: assert int(owners(client)[tx_hash]["cycles"], 16) == cycles
     # Evidence | Limit: Request proof comes from sender protocol log, not custom packet capture. Reannouncement uses another peer; fast control uses original sender.
     # Evidence | Limit: Second refusal log precedes some cleanup; the new request already proves release following the first refusal.
-    # Evidence | Limit: Coverage is static; this B lifecycle review does not establish current real-node per-Case execution outcomes.
+    # Evidence | Limit: Coverage is static; this native-pytest review does not establish current real-node per-Case outcomes.
     # TEST-EVIDENCE-END: VT2-02
     def test_remote_timeout_keeps_peer_connected_for_next_valid_transaction(self):
         """

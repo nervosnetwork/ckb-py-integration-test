@@ -1,13 +1,16 @@
 """Cold reorg recovery bypasses the network-only VM CPU cap."""
 
+import pytest
+
 from framework.basic import CkbTest
 from pathlib import Path
 import toml
-from test_cases.network_verification.runtime import requires_target
+from test_cases.network_verification.runtime import requires_test_feature
 from test_cases.network_verification import workload
 
 
-@requires_target
+@pytest.mark.network_verification
+@requires_test_feature
 class TestRecoveryBudget(CkbTest):
     @classmethod
     def setup_class(cls):
@@ -156,7 +159,7 @@ class TestRecoveryBudget(CkbTest):
     # Evidence | Assert: current = wait_for(lambda: _node_process_id(node), "restarted node listening", 20)
     # Evidence | Assert: assert current != previous, (previous, current)
     # Evidence | Limit: Coldness is established by old-PID disappearance and distinct owned new listener; no private VM/cache counter is claimed. lsof/OS process visibility is an explicit local prerequisite.
-    # Evidence | Limit: Coverage is static; this B lifecycle review does not establish current real-node per-Case execution outcomes.
+    # Evidence | Limit: Coverage is static; this native-pytest review does not establish current real-node per-Case outcomes.
     # TEST-EVIDENCE-END: VT2-10
     def test_detached_transaction_recovers_after_restart_under_one_ms_cap(self):
         """

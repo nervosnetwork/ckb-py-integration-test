@@ -1,13 +1,16 @@
 """A network time-budget refusal must permit later verification."""
 
+import pytest
+
 from framework.basic import CkbTest
 from pathlib import Path
 import toml
 from test_cases.network_verification import workload
-from test_cases.network_verification.runtime import requires_target
+from test_cases.network_verification.runtime import requires_test_feature
 
 
-@requires_target
+@pytest.mark.network_verification
+@requires_test_feature
 class TestTimeBudgetRetry(CkbTest):
     @classmethod
     def setup_class(cls):
@@ -159,7 +162,7 @@ class TestTimeBudgetRetry(CkbTest):
     # Evidence | Assert: current = wait_for(lambda: _node_process_id(node), "restarted node listening", 20)
     # Evidence | Assert: assert current != previous, (previous, current)
     # Evidence | Limit: Both selector methods must run; neither alone completes the Case.
-    # Evidence | Limit: Coverage is static; this B lifecycle review does not establish current real-node per-Case execution outcomes.
+    # Evidence | Limit: Coverage is static; this native-pytest review does not establish current real-node per-Case outcomes.
     # Evidence | Limit: The budget-change control now uses the same verified cold process boundary as persistence/reorg tests.
     # TEST-EVIDENCE-END: VT2-33
     def test_network_budget_accepts_same_transaction_after_limit_increase(self):

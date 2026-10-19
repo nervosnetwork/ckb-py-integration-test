@@ -7,8 +7,13 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import toml
+import pytest
+
 from framework.basic import CkbTest
-from test_cases.network_verification.runtime import binary_dir, requires_target
+from test_cases.network_verification.runtime import (
+    PRODUCTION_BIN_DIR,
+    requires_test_feature,
+)
 
 
 def _unused_port():
@@ -17,7 +22,8 @@ def _unused_port():
         return sock.getsockname()[1]
 
 
-@requires_target
+@pytest.mark.network_verification
+@requires_test_feature
 class TestTxPoolConfigCompatibility(CkbTest):
     def teardown_method(self, method):
         # Node logs are captured by pytest; avoid the base shared report copy.
@@ -126,7 +132,7 @@ class TestTxPoolConfigCompatibility(CkbTest):
     # TEST-MAP: VT2-32
     # TEST-EVIDENCE-BEGIN: VT2-32
     # Evidence | Case: VT2-32 (covered)
-    # Evidence | Setup: Caller supplies distinct production/test executable hashes; production configured with no budget fields as baseline.
+    # Evidence | Setup: Use PRODUCTION_BIN_DIR (default project-relative download/production) with its production CKB/CLI; normal configuration has no budget fields. No manifest or executable-hash comparison is performed.
     # Evidence | Trigger: Start ordinary config and query tx_pool_info; separately run production with each of three internal fields.
     # Evidence | Observe: Baseline RPC tip0 available; each field causes nonzero process exit and exact unknown-field diagnostic.
     # Evidence | Assert: assert info["tip_number"] == "0x0"
@@ -136,11 +142,11 @@ class TestTxPoolConfigCompatibility(CkbTest):
     # Evidence | Assert: assert field not in config["tx_pool"]
     # Evidence | Assert: assert result.returncode != 0, f"{field} unexpectedly started node"
     # Evidence | Assert: assert f"unknown field `{field}`" in output, output[-1500:]
-    # Evidence | Limit: Fields loop within one method. Distinct hashes/config behavior do not attest matching product source revisions; caller must supply build provenance.
-    # Evidence | Limit: Coverage is static; this B lifecycle review does not establish current real-node per-Case execution outcomes.
+    # Evidence | Limit: Fields loop within one method. Binary hash/distinctness/preflight and source-revision attestation are no longer suite checks; caller supplies the two builds and their provenance. Actual production/test configuration behavior remains asserted.
+    # Evidence | Limit: Coverage is static; this native-pytest review does not establish current real-node per-Case outcomes.
     # TEST-EVIDENCE-END: VT2-32
     def test_production_rejects_test_only_budget_fields(self):
-        production = binary_dir("production")
+        production = PRODUCTION_BIN_DIR
         with self._running_node(
             "production_defaults",
             {},
@@ -163,7 +169,7 @@ class TestTxPoolConfigCompatibility(CkbTest):
     # TEST-MAP: VT2-33
     # TEST-EVIDENCE-BEGIN: VT2-33
     # Evidence | Case: VT2-33 (covered)
-    # Evidence | Setup: Test executable with separate directories/ports for default,1,12000,0,-1,4294967296 plus two unexposed fields.
+    # Evidence | Setup: Existing CURRENT_TEST selects download/current test-feature CKB/CLI; separate node directories/ports for default,1,12000,0,-1,4294967296 plus two unexposed fields.
     # Evidence | Trigger: Actual startup for allowed values; bounded subprocess rejection for invalid values and fields.
     # Evidence | Observe: Allowed RPC readiness; invalid nonzero exits identify field/range and closed RPC port; unsupported fields report unknown-field.
     # Evidence | Assert: assert info["tip_number"] == "0x0"
@@ -183,7 +189,7 @@ class TestTxPoolConfigCompatibility(CkbTest):
     # Evidence | Assert: assert result.returncode != 0, f"{field} unexpectedly started node"
     # Evidence | Assert: assert f"unknown field `{field}`" in output, output[-1500:]
     # Evidence | Limit: Both selector methods must run; neither alone completes the Case.
-    # Evidence | Limit: Coverage is static; this B lifecycle review does not establish current real-node per-Case execution outcomes.
+    # Evidence | Limit: Coverage is static; this native-pytest review does not establish current real-node per-Case outcomes.
     # Evidence | Limit: The budget-change control now uses the same verified cold process boundary as persistence/reorg tests.
     # TEST-EVIDENCE-END: VT2-33
     def test_budget_configuration_bounds(self):
@@ -225,5 +231,7 @@ class TestTxPoolConfigCompatibility(CkbTest):
             finally:
                 node.clean()
         for field in ("min_tx_verify_time_ms", "cycles_per_ms"):
-            self._rejected_config(field, binary_dir())
+            self._rejected_config(
+                field, self.CkbNodeConfigPath.CURRENT_TEST.ckb_bin_path
+            )
         self.did_pass = True

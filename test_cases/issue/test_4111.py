@@ -59,8 +59,9 @@ class Test4111(CkbTest):
     # Evidence | Assert: assert int(result["cycles"], 16) == int(preview["cycles"], 16) > 0
     # Evidence | Assert: assert tx_hash in client.get_raw_tx_pool(False)["pending"]
     # Evidence | Limit: Intended public fee precheck, not later contextual OutputsSumOverflow.
-    # Evidence | Limit: Coverage is static; this B lifecycle review does not establish current real-node per-Case execution outcomes.
+    # Evidence | Limit: Coverage is static; this native-pytest review does not establish current real-node per-Case outcomes.
     # TEST-EVIDENCE-END: VT2-53
+    @pytest.mark.network_verification
     def test_output_capacity_exceeding_inputs_is_rejected(self):
         import requests
 

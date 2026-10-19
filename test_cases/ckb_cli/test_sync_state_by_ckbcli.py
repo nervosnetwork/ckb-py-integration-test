@@ -73,10 +73,11 @@ class TestCkbCliRpc117(CkbTest):
         assert "orphan_blocks_size" not in sync_state
 
 
-from test_cases.network_verification.runtime import requires_target
+from test_cases.network_verification.runtime import requires_test_feature
 
 
-@requires_target
+@pytest.mark.network_verification
+@requires_test_feature
 class TestSyncProgress(CkbTest):
     @classmethod
     def setup_class(cls):
@@ -225,8 +226,7 @@ class TestSyncProgress(CkbTest):
     # Evidence |             ), (state, header)
     # Evidence | Limit: Sequential public progress regression, not deterministic private callback/reset race.
     # Evidence | Limit: Three stable samples span finite0.2s; no continued source mining after convergence.
-    # Evidence | Limit: Coverage is static; this B lifecycle review does not establish current real-node per-Case execution outcomes.
-    # Evidence | Limit: Initial full execution stopped this selector in setup with missing module-global Path. The import-only correction resolves that name; focused/full post-fix execution remains a separate gate.
+    # Evidence | Limit: Coverage is static; this native-pytest review does not establish current real-node per-Case outcomes.
     # TEST-EVIDENCE-END: VT2-39
     def test_invalid_block_then_valid_sync_preserves_progress_floor(self):
         """

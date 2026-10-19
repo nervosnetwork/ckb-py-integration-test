@@ -4,6 +4,8 @@ from pathlib import Path
 
 import framework.helper.ckb_cli as ckb_cli_helper
 import framework.helper.contract as contract_helper
+import pytest
+
 from framework.basic import CkbTest
 import toml
 from test_cases.network_verification import workload
@@ -156,10 +158,11 @@ class TestVmSchedulerRegressions(CkbTest):
         )
 
 
-from test_cases.network_verification.runtime import requires_target
+from test_cases.network_verification.runtime import requires_test_feature
 
 
-@requires_target
+@pytest.mark.network_verification
+@requires_test_feature
 class TestVmVerificationPaths(CkbTest):
     @classmethod
     def setup_class(cls):
@@ -314,7 +317,7 @@ class TestVmVerificationPaths(CkbTest):
     # TEST-MAP: VT2-24
     # TEST-EVIDENCE-BEGIN: VT2-24
     # Evidence | Case: VT2-24 (covered)
-    # Evidence | Setup: Nine script hashes prechecked; fixed cycle JSON read without regeneration. Seven VM/version and applicable exec/spawn fixtures use independent genesis cells and cap12000. Fresh class-owned nodes are explicitly configured and started in TestVmVerificationPaths.setup_class; each class has one independent scenario.
+    # Evidence | Setup: Each of the nine requested script inputs is checked against its fixed SHA-256 as script_path is called during setup; there is no suite-wide manifest preflight; fixed cycle JSON read without regeneration. Seven VM/version and applicable exec/spawn fixtures use independent genesis cells and cap12000. Fresh class-owned nodes are explicitly configured and started in TestVmVerificationPaths.setup_class; each class has one independent scenario.
     # Evidence | Trigger: Each fixture: source RPC dry-run, real relay to second node, mining, then full-block submit to isolated third node whose target status is unknown.
     # Evidence | Observe: RPC and verbose pool cycles match fixed baseline; cold node body/block hash committed matches source; full-block helper requires canonical tip convergence.
     # Evidence | Assert: assert int(preview["cycles"], 16) == expected[label], (label, preview)
@@ -338,7 +341,7 @@ class TestVmVerificationPaths(CkbTest):
     # Evidence | Assert: raise AssertionError(f"block receiver did not reach {expected_tip}")
     # Evidence | Limit: Seven fixture labels are an in-method loop, not seven independent pytest parameter selectors.
     # Evidence | Limit: Baseline JSON fixes values/hashes but lacks original pre-change commit/binary/measurement receipt; historical provenance is unverified.
-    # Evidence | Limit: Coverage is static; this B lifecycle review does not establish current real-node per-Case execution outcomes.
+    # Evidence | Limit: Coverage is static; this native-pytest review does not establish current real-node per-Case outcomes.
     # TEST-EVIDENCE-END: VT2-24
     def test_vm_cycles_match_across_rpc_relay_and_block_verification(self):
         """

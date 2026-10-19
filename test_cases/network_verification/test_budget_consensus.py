@@ -1,13 +1,16 @@
 """Network pool time limits must not reject a valid full block."""
 
+import pytest
+
 from framework.basic import CkbTest
 from pathlib import Path
 import toml
 from test_cases.network_verification import workload
-from test_cases.network_verification.runtime import requires_target
+from test_cases.network_verification.runtime import requires_test_feature
 
 
-@requires_target
+@pytest.mark.network_verification
+@requires_test_feature
 class TestBudgetConsensusIsolation(CkbTest):
     @classmethod
     def setup_class(cls):
@@ -121,7 +124,7 @@ class TestBudgetConsensusIsolation(CkbTest):
     # Evidence |             == miner.getClient().get_tip_header()["hash"]
     # Evidence |         )
     # Evidence | Limit: Full-block RPC instead of P2P block transport, with ordinary consensus validation still enabled at receiver.
-    # Evidence | Limit: Coverage is static; this B lifecycle review does not establish current real-node per-Case execution outcomes.
+    # Evidence | Limit: Coverage is static; this native-pytest review does not establish current real-node per-Case outcomes.
     # TEST-EVIDENCE-END: VT2-08
     def test_pool_timeout_does_not_reject_independently_mined_valid_block(self):
         """
