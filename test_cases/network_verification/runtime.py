@@ -10,10 +10,10 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-BASELINE = ROOT / "suites/network_verification/fixtures/vm-cycle-baseline.json"
+BASELINE = ROOT / "test_cases/network_verification/fixtures/vm-cycle-baseline.json"
 requires_target = pytest.mark.skipif(
     not os.environ.get("CKB_TEST_TARGET_MANIFEST"),
-    reason="Opt-in budget regression: use suites/network_verification/tests/run_selected.py",
+    reason="Opt-in budget regression: use test_cases/network_verification/run_selected.py",
 )
 
 

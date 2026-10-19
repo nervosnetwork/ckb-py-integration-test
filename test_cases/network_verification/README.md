@@ -3,7 +3,7 @@
 Run the completed 17 pytest methods (19 mapped integration test points) with
 ordinary CKB nodes, RPC and node-to-node relay. Existing DAO, Type ID, capacity,
 VM and sync tests are reused in place. Additional budget tests use descriptive
-names under `tests/`; `workload.py` only shares node/transaction helpers. No
+names directly under `test_cases/network_verification/`; `workload.py` only shares node/transaction helpers. No
 custom Python P2P stack, Rust tests or automatic product builds are included.
 
 ## Prepare once
@@ -32,7 +32,7 @@ custom Python P2P stack, Rust tests or automatic product builds are included.
 From this repository (replace the four input paths):
 
 ```sh
-python3 suites/network_verification/tests/run_selected.py \
+python3 test_cases/network_verification/run_selected.py \
   --test-binary /path/to/test-build/ckb \
   --production-binary /path/to/production-build/ckb \
   --ckb-cli /path/to/ckb-cli \

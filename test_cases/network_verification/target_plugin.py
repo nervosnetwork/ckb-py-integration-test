@@ -9,7 +9,7 @@ import pytest
 from framework import config as project_config
 from framework.helper import ckb_cli
 from framework.test_node import CkbNodeConfigPath, DOCKER
-from suites.network_verification.runtime import ROOT, binary_dir, target
+from test_cases.network_verification.runtime import ROOT, binary_dir, target
 
 
 @pytest.fixture(scope="session", autouse=True)

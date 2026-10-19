@@ -11,31 +11,31 @@ import tempfile
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[3]
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-from suites.network_verification.runtime import prepare_target, sha256
+from test_cases.network_verification.runtime import prepare_target, sha256
 
 PYTHON_CASES = [
     # Each selector invokes the existing case in place; no copied test body.
     # TEST-MAP: VT2-32
-    "suites/network_verification/tests/test_budget_config.py::TestTxPoolConfigCompatibility::test_production_rejects_test_only_budget_fields",
+    "test_cases/network_verification/test_budget_config.py::TestTxPoolConfigCompatibility::test_production_rejects_test_only_budget_fields",
     # TEST-MAP: VT2-33
-    "suites/network_verification/tests/test_budget_config.py::TestTxPoolConfigCompatibility::test_budget_configuration_bounds",
+    "test_cases/network_verification/test_budget_config.py::TestTxPoolConfigCompatibility::test_budget_configuration_bounds",
     # TEST-MAP: VT2-26
     "test_cases/tx_pool_refactor/test_21_dao_pre_script_verification.py::TestDaoPreScriptVerification::test_lock_size_boundary_and_index",
     # TEST-MAP: VT2-54
     "test_cases/tx_pool_refactor/test_21_dao_pre_script_verification.py::TestDaoPreScriptVerification::test_dao_withdraw_requires_withdrawing_header",
     # TEST-MAP: VT2-27
     "test_cases/ckb_cli/test_ckbcli_dep_groups_enable_type_id_203.py::TestCkbCliMultisig203::test_01_dep_groups_enable_type_id_true",
-    "suites/network_verification/tests/test_budget_retry.py::TestTimeBudgetRetry::test_network_budget_accepts_same_transaction_after_limit_increase",
-    "suites/network_verification/tests/test_budget_consensus.py::TestBudgetConsensusIsolation::test_pool_timeout_does_not_reject_independently_mined_valid_block",
-    "suites/network_verification/tests/test_peer_timeout.py::TestRemoteTimeBudgetPeer::test_remote_timeout_keeps_peer_connected_for_next_valid_transaction",
-    "suites/network_verification/tests/test_source_budget.py::TestSourceBudget::test_network_refusal_does_not_block_dry_run_or_local_submission",
-    "suites/network_verification/tests/test_source_budget.py::TestSourceBudget::test_persisted_slow_transaction_reloads_without_network_budget",
-    "suites/network_verification/tests/test_recovery_budget.py::TestRecoveryBudget::test_detached_transaction_recovers_after_restart_under_one_ms_cap",
-    "suites/network_verification/tests/test_budget_rbf.py::TestBudgetReplacement::test_network_timeout_preserves_parent_child_until_same_candidate_local_rbf",
-    "suites/network_verification/tests/test_budget_rbf.py::TestBudgetReplacement::test_locally_rejected_slow_transaction_recovers_when_conflict_is_replaced",
-    "suites/network_verification/tests/test_cached_context.py::TestCachedContext::test_cached_script_proof_does_not_skip_since_after_truncate",
+    "test_cases/network_verification/test_budget_retry.py::TestTimeBudgetRetry::test_network_budget_accepts_same_transaction_after_limit_increase",
+    "test_cases/network_verification/test_budget_consensus.py::TestBudgetConsensusIsolation::test_pool_timeout_does_not_reject_independently_mined_valid_block",
+    "test_cases/network_verification/test_peer_timeout.py::TestRemoteTimeBudgetPeer::test_remote_timeout_keeps_peer_connected_for_next_valid_transaction",
+    "test_cases/network_verification/test_source_budget.py::TestSourceBudget::test_network_refusal_does_not_block_dry_run_or_local_submission",
+    "test_cases/network_verification/test_source_budget.py::TestSourceBudget::test_persisted_slow_transaction_reloads_without_network_budget",
+    "test_cases/network_verification/test_recovery_budget.py::TestRecoveryBudget::test_detached_transaction_recovers_after_restart_under_one_ms_cap",
+    "test_cases/network_verification/test_budget_rbf.py::TestBudgetReplacement::test_network_timeout_preserves_parent_child_until_same_candidate_local_rbf",
+    "test_cases/network_verification/test_budget_rbf.py::TestBudgetReplacement::test_locally_rejected_slow_transaction_recovers_when_conflict_is_replaced",
+    "test_cases/network_verification/test_cached_context.py::TestCachedContext::test_cached_script_proof_does_not_skip_since_after_truncate",
     # TEST-MAP: VT2-53
     "test_cases/issue/test_4111.py::Test4111::test_output_capacity_exceeding_inputs_is_rejected",
     # TEST-MAP: VT2-24
@@ -154,7 +154,7 @@ def main():
         "-o",
         "addopts=",
         "-p",
-        "suites.network_verification.tests.target_plugin",
+        "test_cases.network_verification.target_plugin",
         "-q",
         *selected,
         "--junitxml=" + str(run / "regression.xml"),

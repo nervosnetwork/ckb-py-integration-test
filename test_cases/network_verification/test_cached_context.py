@@ -10,8 +10,8 @@ from pathlib import Path
 import pytest
 
 from framework.basic import CkbTest
-from suites.network_verification.runtime import ROOT, binary_dir, requires_target
-from suites.network_verification.workload import _ports
+from test_cases.network_verification.runtime import ROOT, binary_dir, requires_target
+from test_cases.network_verification.workload import _ports
 
 
 @requires_target

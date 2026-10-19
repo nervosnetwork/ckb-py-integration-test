@@ -1,7 +1,7 @@
 """Network pool time limits must not reject a valid full block."""
 
 from framework.basic import CkbTest
-from suites.network_verification.runtime import requires_target
+from test_cases.network_verification.runtime import requires_target
 
 
 @requires_target
@@ -41,7 +41,7 @@ class TestBudgetConsensusIsolation(CkbTest):
     # Evidence | Limit: Static coverage only; final frozen full run was not supplied and no per-Case pass is inferred.
     # TEST-EVIDENCE-END: VT2-08
     def test_pool_timeout_does_not_reject_independently_mined_valid_block(self):
-        from suites.network_verification import workload as w
+        from test_cases.network_verification import workload as w
 
         with w.nodes(12_000, 1) as (miner, receiver):
             tx = w.transaction(miner, slow=True)

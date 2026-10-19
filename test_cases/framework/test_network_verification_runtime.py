@@ -5,8 +5,8 @@ import os
 from pathlib import Path
 
 import pytest
-from suites.network_verification import runtime
-from suites.network_verification.tests.run_selected import PYTHON_CASES, execute
+from test_cases.network_verification import runtime
+from test_cases.network_verification.run_selected import PYTHON_CASES, execute
 
 
 @pytest.fixture
@@ -146,7 +146,7 @@ def test_legacy_shell_unsafe_output_path_fails_preflight(inputs, name):
 
 
 def test_restart_requires_old_process_exit_before_start(monkeypatch):
-    from suites.network_verification import workload as w
+    from test_cases.network_verification import workload as w
 
     events = []
 
@@ -170,7 +170,7 @@ def test_restart_requires_old_process_exit_before_start(monkeypatch):
 
 
 def test_restart_requires_a_different_listening_pid(monkeypatch):
-    from suites.network_verification import workload as w
+    from test_cases.network_verification import workload as w
     from types import SimpleNamespace
 
     pids = iter([42, None, 42])

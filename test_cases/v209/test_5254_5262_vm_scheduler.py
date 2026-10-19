@@ -154,7 +154,7 @@ class TestVmSchedulerRegressions(CkbTest):
         )
 
 
-from suites.network_verification.runtime import requires_target
+from test_cases.network_verification.runtime import requires_target
 
 
 @requires_target
@@ -195,8 +195,8 @@ class TestVmVerificationPaths(CkbTest):
     # TEST-EVIDENCE-END: VT2-24
     def test_vm_cycles_match_across_rpc_relay_and_block_verification(self):
         import json
-        from suites.network_verification import workload as w
-        from suites.network_verification.runtime import ROOT, script_path
+        from test_cases.network_verification import workload as w
+        from test_cases.network_verification.runtime import ROOT, script_path
 
         fixtures = [
             ("vm0", "data", []),
@@ -221,7 +221,7 @@ class TestVmVerificationPaths(CkbTest):
         ]
         expected = json.loads(
             (
-                ROOT / "suites/network_verification/fixtures/vm-cycle-baseline.json"
+                ROOT / "test_cases/network_verification/fixtures/vm-cycle-baseline.json"
             ).read_text()
         )["values"]
         programs = sorted({name for _, _, names in fixtures for name in names})

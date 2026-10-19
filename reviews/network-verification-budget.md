@@ -2,7 +2,7 @@
 
 25 个已确认的集成测试点；本次交付 17 个 pytest 方法，映射其中 19 点。VT2-03/04/05/30/55/57 尚未实现，保留为缺口，不计通过。
 
-运行说明见 [suite README](../suites/network_verification/README.md)。用例预期不随被测版本自动改变；映射勾选不等于执行通过。
+运行说明见 [suite README](../test_cases/network_verification/README.md)。用例预期不随被测版本自动改变；映射勾选不等于执行通过。
 
 ## 1. 变更与测试边界
 

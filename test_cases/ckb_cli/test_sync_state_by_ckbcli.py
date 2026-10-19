@@ -69,7 +69,7 @@ class TestCkbCliRpc117(CkbTest):
         assert "orphan_blocks_size" not in sync_state
 
 
-from suites.network_verification.runtime import requires_target
+from test_cases.network_verification.runtime import requires_target
 
 
 @requires_target
@@ -115,7 +115,7 @@ class TestSyncProgress(CkbTest):
     def test_invalid_block_then_valid_sync_preserves_progress_floor(self):
         import copy
         import time
-        from suites.network_verification import workload as w
+        from test_cases.network_verification import workload as w
 
         with w.nodes(12_000, 12_000, 12_000) as (bad, receiver, healthy):
             bad_rpc, client = bad.getClient(), receiver.getClient()

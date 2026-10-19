@@ -1,7 +1,7 @@
 """A network time-budget refusal must permit later verification."""
 
 from framework.basic import CkbTest
-from suites.network_verification.runtime import requires_target
+from test_cases.network_verification.runtime import requires_target
 
 
 @requires_target
@@ -48,7 +48,7 @@ class TestTimeBudgetRetry(CkbTest):
     # Evidence | Limit: The budget-change control now uses the same verified cold process boundary as persistence/reorg tests.
     # TEST-EVIDENCE-END: VT2-33
     def test_network_budget_accepts_same_transaction_after_limit_increase(self):
-        from suites.network_verification import workload as w
+        from test_cases.network_verification import workload as w
 
         with w.nodes(12_000, 1, 12_000) as (source, receiver, other):
             tx = w.transaction(source, slow=True)

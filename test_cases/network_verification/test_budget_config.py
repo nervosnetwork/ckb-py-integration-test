@@ -8,7 +8,7 @@ from pathlib import Path
 
 import toml
 from framework.basic import CkbTest
-from suites.network_verification.runtime import binary_dir, requires_target
+from test_cases.network_verification.runtime import binary_dir, requires_target
 
 
 def _unused_port():

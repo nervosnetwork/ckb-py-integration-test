@@ -1,8 +1,8 @@
 """Cold reorg recovery bypasses the network-only VM CPU cap."""
 
 from framework.basic import CkbTest
-from suites.network_verification.runtime import requires_target
-from suites.network_verification import workload as w
+from test_cases.network_verification.runtime import requires_target
+from test_cases.network_verification import workload as w
 
 
 @requires_target

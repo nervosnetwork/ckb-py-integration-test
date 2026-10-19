@@ -3,8 +3,8 @@
 import copy
 
 from framework.basic import CkbTest
-from suites.network_verification.runtime import requires_target
-from suites.network_verification import workload as w
+from test_cases.network_verification.runtime import requires_target
+from test_cases.network_verification import workload as w
 from test_cases.tx_pool_refactor.dao_precheck.support import transaction_hash
 
 

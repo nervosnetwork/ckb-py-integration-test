@@ -17,7 +17,7 @@ from pathlib import Path
 import toml
 
 from framework.basic import CkbTest
-from suites.network_verification.runtime import script_path
+from test_cases.network_verification.runtime import script_path
 
 CKB = 100_000_000
 BUDGET_CYCLES = 135_598_681  # Independent pre-change reference, same VM scripts/groups.
