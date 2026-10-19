@@ -6,24 +6,17 @@ import time
 from pathlib import Path
 
 import toml
-import pytest
 
 from framework.basic import CkbTest
 from test_cases.network_verification import workload
-from test_cases.network_verification.runtime import (
-    PRODUCTION_BIN_DIR,
-    requires_test_feature,
-)
 
 
-@pytest.mark.network_verification
-@requires_test_feature
 class TestTxPoolConfigCompatibility(CkbTest):
 
     # TEST-MAP: VT2-32
     # TEST-EVIDENCE-BEGIN: VT2-32
     # Evidence | Case: VT2-32 (covered)
-    # Evidence | Setup: Use PRODUCTION_BIN_DIR (default download/production) and the existing template in a fresh directory with unused RPC/P2P ports; assert all three internal fields are absent from ordinary tx_pool config. For normal starts, node.start() owns version reporting, background launch and node.log. The test begins its retained 20-second RPC-readiness deadline after start() returns. Finally node.stop() then node.clean() use the framework lifecycle.
+    # Evidence | Setup: The caller configures CURRENT_TEST with a production build before running this method. Use its existing template in a fresh directory with unused RPC/P2P ports; assert all three internal fields are absent from ordinary tx_pool config. For normal starts, node.start() owns version reporting, background launch and node.log. The test begins its retained 20-second RPC-readiness deadline after start() returns. Finally node.stop() then node.clean() use the framework lifecycle.
     # Evidence | Trigger: Start ordinary config with node.start() and query tx_pool_info; independently inject each of max_tx_verify_time_ms, min_tx_verify_time_ms and cycles_per_ms and run the unchanged subprocess.run rejection path with timeout=10.
     # Evidence | Observe: Ordinary RPC returns genesis tip 0x0. Each invalid production config exits nonzero with its exact unknown-field diagnostic; this proves rejected-process startup, not a separately sampled RPC-port closure.
     # Evidence | Assert: assert info["tip_number"] == "0x0"
@@ -38,16 +31,9 @@ class TestTxPoolConfigCompatibility(CkbTest):
     # Evidence | Limit: Static semantic review plus three-selector collection only; no real-node execution or per-Case pass result was produced by this review. Reviewer isolation is isolation_unverified.
     # TEST-EVIDENCE-END: VT2-32
     def test_production_rejects_test_only_budget_fields(self):
-        production = PRODUCTION_BIN_DIR
         # 1. 准备生产构建的默认配置；每个配置场景独立使用节点目录。
         rpc_port, p2p_port = workload.unused_ports(2)
         base = self.CkbNodeConfigPath.CURRENT_TEST
-        base = self.CkbNodeConfigPath(
-            base.ckb_config_path,
-            base.ckb_miner_config_path,
-            base.ckb_spec_path,
-            production,
-        )
         node = self.CkbNode.init_dev_by_port(
             base,
             f"tx_pool/budget_config/production_defaults_{rpc_port}",
@@ -96,12 +82,6 @@ class TestTxPoolConfigCompatibility(CkbTest):
         ):
             rpc_port, p2p_port = workload.unused_ports(2)
             base = self.CkbNodeConfigPath.CURRENT_TEST
-            base = self.CkbNodeConfigPath(
-                base.ckb_config_path,
-                base.ckb_miner_config_path,
-                base.ckb_spec_path,
-                production,
-            )
             node = self.CkbNode.init_dev_by_port(
                 base,
                 f"tx_pool/budget_config/invalid_{field}_{rpc_port}",
@@ -142,7 +122,7 @@ class TestTxPoolConfigCompatibility(CkbTest):
     # TEST-MAP: VT2-33
     # TEST-EVIDENCE-BEGIN: VT2-33
     # Evidence | Case: VT2-33 (covered)
-    # Evidence | Setup: Use CURRENT_TEST (download/current) with fresh directories/ports for default config and max_tx_verify_time_ms=1/12000. For normal starts, node.start() owns version reporting, background launch and node.log. The test begins its retained 20-second RPC-readiness deadline after start() returns. Finally node.stop() then node.clean() use the framework lifecycle.
+    # Evidence | Setup: The caller configures CURRENT_TEST with a test-feature build before running this method. Use fresh directories/ports for default config and max_tx_verify_time_ms=1/12000. For normal starts, node.start() owns version reporting, background launch and node.log. The test begins its retained 20-second RPC-readiness deadline after start() returns. Finally node.stop() then node.clean() use the framework lifecycle.
     # Evidence | Trigger: Start each allowed configuration via node.start(); preserve subprocess.run for 0, -1, 4294967296 (15-second timeout) and unsupported min_tx_verify_time_ms/cycles_per_ms (10-second timeout).
     # Evidence | Observe: Allowed values expose tx_pool_info at genesis and an empty pending pool. Invalid values exit nonzero, identify max_tx_verify_time_ms and range/nonzero failure, and leave the RPC socket closed. Unsupported fields exit nonzero with the exact unknown-field diagnostic.
     # Evidence | Assert: assert info["tip_number"] == "0x0"
@@ -263,12 +243,6 @@ class TestTxPoolConfigCompatibility(CkbTest):
         for field in ("min_tx_verify_time_ms", "cycles_per_ms"):
             rpc_port, p2p_port = workload.unused_ports(2)
             base = self.CkbNodeConfigPath.CURRENT_TEST
-            base = self.CkbNodeConfigPath(
-                base.ckb_config_path,
-                base.ckb_miner_config_path,
-                base.ckb_spec_path,
-                self.CkbNodeConfigPath.CURRENT_TEST.ckb_bin_path,
-            )
             node = self.CkbNode.init_dev_by_port(
                 base,
                 f"tx_pool/budget_config/invalid_{field}_{rpc_port}",

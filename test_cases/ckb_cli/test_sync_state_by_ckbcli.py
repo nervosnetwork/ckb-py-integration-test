@@ -1,6 +1,5 @@
 from pathlib import Path
 
-import pytest
 
 from framework.basic import CkbTest
 import toml
@@ -73,11 +72,6 @@ class TestCkbCliRpc117(CkbTest):
         assert "orphan_blocks_size" not in sync_state
 
 
-from test_cases.network_verification.runtime import requires_test_feature
-
-
-@pytest.mark.network_verification
-@requires_test_feature
 class TestSyncProgress(CkbTest):
     @classmethod
     def setup_class(cls):

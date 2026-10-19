@@ -10,11 +10,9 @@ from pathlib import Path
 import requests
 import toml
 
-import pytest
 
 from framework.basic import CkbTest
 
-from test_cases.network_verification.runtime import requires_test_feature
 from test_cases.network_verification import workload
 
 
@@ -32,8 +30,6 @@ def _read_json_line(connection, buffer, timeout):
     return json.loads(line), buffer
 
 
-@pytest.mark.network_verification
-@requires_test_feature
 class TestBudgetReplacement(CkbTest):
     @classmethod
     def setup_class(cls):
@@ -361,8 +357,6 @@ class TestBudgetReplacement(CkbTest):
         self.did_pass = True
 
 
-@pytest.mark.network_verification
-@requires_test_feature
 class TestLocalConflictRecovery(CkbTest):
     @classmethod
     def setup_class(cls):

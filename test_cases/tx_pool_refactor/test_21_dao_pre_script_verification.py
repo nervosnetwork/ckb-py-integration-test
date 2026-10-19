@@ -12,7 +12,6 @@ from pathlib import Path
 import toml
 import requests
 
-import pytest
 
 from framework.basic import CkbTest
 from test_cases.tx_pool_refactor.dao_precheck.support import (
@@ -400,7 +399,6 @@ class TestDaoPreScriptVerification(CkbTest):
     # Evidence | Limit: Six index/delta unittest subTests occur inside one pytest selector; no per-subtest result record assumed.
     # Evidence | Limit: Static coverage only; this readability review does not establish current real-node per-Case outcomes.
     # TEST-EVIDENCE-END: VT2-26
-    @pytest.mark.network_verification
     def test_lock_size_boundary_and_index(self):
         cells = self._create_cells((True, False, True, False, True))
         for index in (0, 2, 4):
@@ -517,7 +515,6 @@ class TestDaoPreScriptVerification(CkbTest):
     # Evidence | Limit: Earliest public DAO fee error, not a claimed later verifier branch.
     # Evidence | Limit: Static coverage only; this readability review does not establish current real-node per-Case outcomes.
     # TEST-EVIDENCE-END: VT2-54
-    @pytest.mark.network_verification
     def test_dao_withdraw_requires_withdrawing_header(self):
         cells = self._create_cells()
         prepare = self._prepare_withdraw(cells)

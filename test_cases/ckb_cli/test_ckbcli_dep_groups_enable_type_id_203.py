@@ -1,5 +1,3 @@
-import pytest
-
 from framework.basic import CkbTest
 import copy
 import tempfile
@@ -71,7 +69,6 @@ class TestCkbCliMultisig203(CkbTest):
     # Evidence | Limit: Representative creation hash rule only, not complete Type ID update/destroy matrix.
     # Evidence | Limit: Static coverage only; this readability review does not establish current real-node per-Case outcomes.
     # TEST-EVIDENCE-END: VT2-27
-    @pytest.mark.network_verification
     def test_01_dep_groups_enable_type_id_true(self):
         # 1. deploy contract return deploy tx hash
         dep_group_tx_hash = self.Contract.deploy_ckb_contract(

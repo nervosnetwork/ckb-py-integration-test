@@ -1,16 +1,11 @@
 """Network pool time limits must not reject a valid full block."""
 
-import pytest
-
 from framework.basic import CkbTest
 from pathlib import Path
 import toml
 from test_cases.network_verification import workload
-from test_cases.network_verification.runtime import requires_test_feature
 
 
-@pytest.mark.network_verification
-@requires_test_feature
 class TestBudgetConsensusIsolation(CkbTest):
     @classmethod
     def setup_class(cls):

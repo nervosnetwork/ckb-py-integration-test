@@ -5,8 +5,9 @@ layout even when a generic test-authoring workflow suggests a `suites/` director
 
 For network-verification regression tests, use
 [`../test_cases/network_verification/README.md`](../test_cases/network_verification/README.md).
-Run with the existing `python3 -m pytest` entry point and the
-`network_verification` marker. Reusable helpers and fixtures live beside those tests. Existing DAO, Type ID, capacity,
+Run with the existing `python3 -m pytest` entry point and native file/class/method
+selectors. Configure binaries through `CkbNodeConfigPath.CURRENT_TEST`.
+Reusable helpers and fixtures live beside those tests. Existing DAO, Type ID, capacity,
 VM and sync tests remain in their original `test_cases/` groups.
 
 This directory is only a navigation reminder. Do not add executable tests or

@@ -2,63 +2,56 @@
 
 These 17 pytest methods cover 19 mapped integration test points using ordinary
 CKB nodes, RPC and node-to-node relay. Existing DAO, Type ID, capacity, VM and
-sync methods are marked in place rather than copied or listed in a custom runner.
+sync methods stay in their original files rather than being copied.
 
 ## Existing project configuration
 
-Use the same setup as other `test_cases` groups:
+All nodes use `CkbNodeConfigPath.CURRENT_TEST` directly. The caller chooses the
+CKB/ckb-cli binaries by editing that existing configuration before a run;
+tests do not select another binary directory or require an enabling flag.
+CLI helpers continue to use the project's existing `source/ckb-cli` path.
 
-- `pip install -r requirements.txt`, Python 3.10–3.12, Linux/macOS and `lsof`.
-- `CkbNodeConfigPath.CURRENT_TEST` selects `download/current/ckb` and
-  `download/current/ckb-cli`; CLI helpers use `source/ckb-cli`. Prepare these
-  paths with compatible executables, as for the rest of the project.
-- For this optional regression only, the CKB in `download/current` must be a
-  **test-feature build** supporting `max_tx_verify_time_ms`. The default version
-  in `download.py` and `framework/test_node.py` is unchanged; updating it belongs
-  in a later PR. Do not replace a release binary in a shared checkout while
-  another test run is using it; use a separate checkout for this feature build.
-- Put a production build without the test feature from the **same revision** in
-  `download/production/ckb`, plus a compatible `download/production/ckb-cli`.
-  `CKB_PRODUCTION_BIN_DIR` optionally overrides this project-relative directory.
-  Build provenance is supplied by the caller; tests check actual config behavior,
-  not whether two executables came from the same source revision.
-- Put the matching CKB `script/testdata` contents in `source/ckb-script-testdata`,
-  or set `CKB_SCRIPT_TESTDATA` to that directory. Each requested ELF is checked
-  against the fixed hashes in `fixtures/vm-cycle-baseline.json`. Expected cycles
-  are never regenerated from the node under test.
-- Preserve the legacy framework's checkout name `ckb-py-integration-test` and
-  shell-safe paths (ASCII letters/digits, `/`, `_`, `-`, `.`). Run serially,
-  without Docker or xdist; existing CLI helpers use shared temporary key paths.
-  There is no new path-staging or binary-selection layer.
+Requirements: the project's Python dependencies, Python 3.10–3.12, Linux/macOS
+and `lsof`. Put matching CKB `script/testdata` in `source/ckb-script-testdata`,
+or set `CKB_SCRIPT_TESTDATA`. Fixed ELF hashes and expected VM cycles remain
+in `fixtures/vm-cycle-baseline.json`; tests never regenerate expectations.
+
+Run serially with the framework's usual checkout name and shell-safe paths;
+existing CLI helpers share temporary key paths. No binary staging or additional
+configuration layer is maintained here.
 
 ## Native pytest entry point
 
-From the repository root, enable the test-feature cases and use ordinary pytest:
+Use ordinary file, class or method selectors. No custom marker or automatic
+feature-based skip is installed. For example:
 
 ```sh
-export CKB_NETWORK_VERIFICATION=1
-python3 -m pytest -m network_verification \
-  test_cases/network_verification \
-  test_cases/tx_pool_refactor/test_21_dao_pre_script_verification.py \
-  test_cases/ckb_cli/test_ckbcli_dep_groups_enable_type_id_203.py \
-  test_cases/issue/test_4111.py \
-  test_cases/v209/test_5254_5262_vm_scheduler.py \
-  test_cases/ckb_cli/test_sync_state_by_ckbcli.py
+python3 -m pytest test_cases/network_verification/test_peer_timeout.py
 ```
 
-This selects exactly the existing 17 methods, not the whole repository suite.
-Use native `--collect-only`, `-k`, or `path.py::Class::test_method` for inspection
-or a subset. `pytest.ini` keeps the existing HTML report settings; optionally
-pass `--junitxml=report/network-verification.xml` for CI. No `run_selected.py`,
-manifest, custom pytest plugin, copied binary directory, or selector registry is
-needed. `runtime.py` only holds the opt-in guard and fixture/path helpers.
+The two configuration tests have different binary prerequisites. Configure
+`CURRENT_TEST` with a production build without the test feature, then run:
 
-`test_cases/network_verification` is also included in the existing Makefile
-case-group loop. Without `CKB_NETWORK_VERIFICATION=1`, its 11 methods plus the
-two new VM/sync methods skip, leaving the ordinary release-binary run unchanged.
-The four reused DAO/Type ID/capacity methods continue to run normally. Enabling
-the flag with missing/incompatible inputs results in ordinary pytest failures;
-it is not a missing-input skip. The test-feature flag does not change assertions.
+```sh
+python3 -m pytest test_cases/network_verification/test_budget_config.py::TestTxPoolConfigCompatibility::test_production_rejects_test_only_budget_fields
+```
+
+Configure `CURRENT_TEST` with a test-feature build supporting
+`max_tx_verify_time_ms`, then run the test-feature configuration matrix:
+
+```sh
+python3 -m pytest test_cases/network_verification/test_budget_config.py::TestTxPoolConfigCompatibility::test_budget_configuration_bounds
+```
+
+The other budget regressions likewise require that test-feature build. Do not
+run the production-only method and the test-feature methods together against
+one binary. The caller selects the corresponding tests; an incompatible build
+fails the original assertions instead of being silently skipped.
+
+Use native `--collect-only`, `-k`, or node IDs for inspection and selection.
+`pytest.ini` retains the existing HTML report settings, and the existing
+Makefile case-group loop includes this test directory. `runtime.py` only checks
+fixed script inputs; it neither selects binaries nor controls test execution.
 
 ## What is asserted
 
@@ -107,6 +100,5 @@ project's normal method teardown instead of overriding it with empty methods.
   and log retention. The TCP test keeps only a buffered line reader so fragmented
   or coalesced messages and finite deadlines retain their original behavior.
 
-Existing DAO/Type ID serialization helpers and the native pytest feature guard
-are reused unchanged. These helpers avoid duplicating protocol packing or
+Existing DAO/Type ID serialization helpers are reused unchanged. These helpers avoid duplicating protocol packing or
 weakening shared invariants; scenario actions stay visible in each test.

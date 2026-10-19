@@ -4,7 +4,6 @@ from pathlib import Path
 
 import framework.helper.ckb_cli as ckb_cli_helper
 import framework.helper.contract as contract_helper
-import pytest
 
 from framework.basic import CkbTest
 import toml
@@ -158,11 +157,6 @@ class TestVmSchedulerRegressions(CkbTest):
         )
 
 
-from test_cases.network_verification.runtime import requires_test_feature
-
-
-@pytest.mark.network_verification
-@requires_test_feature
 class TestVmVerificationPaths(CkbTest):
     @classmethod
     def setup_class(cls):

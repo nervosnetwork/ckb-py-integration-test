@@ -1,7 +1,6 @@
 # https://github.com/nervosnetwork/ckb/pull/4111
 import time
 
-import pytest
 
 from framework.basic import CkbTest
 from framework.util import get_project_root
@@ -61,7 +60,6 @@ class Test4111(CkbTest):
     # Evidence | Limit: Intended public fee precheck, not later contextual OutputsSumOverflow.
     # Evidence | Limit: Static coverage only; this readability review does not establish current real-node per-Case outcomes.
     # TEST-EVIDENCE-END: VT2-53
-    @pytest.mark.network_verification
     def test_output_capacity_exceeding_inputs_is_rejected(self):
         import requests
 

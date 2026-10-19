@@ -7,12 +7,9 @@ from pathlib import Path
 import pytest
 
 from framework.basic import CkbTest
-from test_cases.network_verification.runtime import requires_test_feature
 from test_cases.network_verification import workload
 
 
-@pytest.mark.network_verification
-@requires_test_feature
 class TestCachedContext(CkbTest):
     @classmethod
     def setup_class(cls):

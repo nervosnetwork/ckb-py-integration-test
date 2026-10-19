@@ -1,16 +1,11 @@
 """A network time-budget refusal must permit later verification."""
 
-import pytest
-
 from framework.basic import CkbTest
 from pathlib import Path
 import toml
 from test_cases.network_verification import workload
-from test_cases.network_verification.runtime import requires_test_feature
 
 
-@pytest.mark.network_verification
-@requires_test_feature
 class TestTimeBudgetRetry(CkbTest):
     @classmethod
     def setup_class(cls):
