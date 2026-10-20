@@ -89,35 +89,6 @@ class TestBudgetConsensusIsolation(CkbTest):
             node.clean()
 
     # TEST-MAP: VT2-08
-    # TEST-EVIDENCE-BEGIN: VT2-08
-    # Evidence | Case: VT2-08 (covered)
-    # Evidence | Setup: Independent source admits slow transaction; low-cap receiver sees remote refusal only, never local successful validation of target. Fresh class-owned nodes are explicitly configured and started in TestBudgetConsensusIsolation.setup_class; each class has one independent scenario.
-    # Evidence | Trigger: Disconnect receiver; mine target on source; deliver full blocks through ordinary submit_block, not process_block_without_verify.
-    # Evidence | Observe: All block hashes match, canonical tips converge, and committed transaction body/block hash equals independently mined source.
-    # Evidence | Assert: wait_for(
-    # Evidence |         lambda: len(remote_refusals(node, tx_hash)) >= count,
-    # Evidence |         f"processed remote CPU-budget refusal {count} for {tx_hash}",
-    # Evidence |         45,
-    # Evidence |     )
-    # Evidence | Assert: assert tx_hash not in pool_transactions(client)
-    # Evidence | Assert: assert result["tx_status"]["status"] == "unknown", result
-    # Evidence | Assert: assert result["transaction"] is None
-    # Evidence | Assert: assert client.get_banned_addresses() == []
-    # Evidence | Assert: assert node.get_connected_count() >= 1
-    # Evidence | Assert: assert receiver.submit_block("0x0", block) == expected_hash
-    # Evidence | Assert: raise AssertionError(f"block receiver did not reach {expected_tip}")
-    # Evidence | Assert: assert observed["tx_status"]["status"] == "committed"
-    # Evidence | Assert: assert observed["transaction"] == committed["transaction"]
-    # Evidence | Assert: assert (
-    # Evidence |             observed["tx_status"]["block_hash"] == committed["tx_status"]["block_hash"]
-    # Evidence |         )
-    # Evidence | Assert: assert (
-    # Evidence |             receiver.getClient().get_tip_header()["hash"]
-    # Evidence |             == miner.getClient().get_tip_header()["hash"]
-    # Evidence |         )
-    # Evidence | Limit: Full-block RPC instead of P2P block transport, with ordinary consensus validation still enabled at receiver.
-    # Evidence | Limit: Static coverage only; this readability review does not establish current real-node per-Case outcomes.
-    # TEST-EVIDENCE-END: VT2-08
     def test_pool_timeout_does_not_reject_independently_mined_valid_block(self):
         """
         1. 接收节点先因网络预算拒绝慢交易。
@@ -126,6 +97,8 @@ class TestBudgetConsensusIsolation(CkbTest):
         """
         miner = self.miner
         receiver = self.receiver
+
+        # 1. 转发慢交易，确认发送方已入池而低预算接收方出现网络验证超时。
         tx = workload.build_transaction(miner, slow=True)
         miner.connected(receiver)
         workload.wait_for(
@@ -138,6 +111,8 @@ class TestBudgetConsensusIsolation(CkbTest):
         tx_hash = miner.getClient().send_transaction(tx)
         workload.assert_pool_transaction(miner, tx_hash, tx, workload.BUDGET_CYCLES)
         workload.assert_remote_budget_refusal(receiver, tx_hash)
+
+        # 2. 断开 P2P 连接，由发送方独立挖出包含该交易的有效区块。
         receiver.getClient().remove_node(miner.get_peer_id())
         workload.wait_for(
             lambda: receiver.get_connected_count() == 0,
@@ -145,6 +120,8 @@ class TestBudgetConsensusIsolation(CkbTest):
         )
         before = miner.getClient().get_tip_block_number()
         committed = self.Miner.miner_until_tx_committed(miner, tx_hash)
+
+        # 3. 只向接收方提交完整区块，核对确认状态、交易体、所在区块和链尖端。
         workload.sync_blocks(
             miner, receiver, before + 1, miner.getClient().get_tip_block_number()
         )

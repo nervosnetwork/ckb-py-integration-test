@@ -12,9 +12,11 @@ tests do not select another binary directory or require an enabling flag.
 CLI helpers continue to use the project's existing `source/ckb-cli` path.
 
 Requirements: the project's Python dependencies, Python 3.10–3.12, Linux/macOS
-and `lsof`. Put matching CKB `script/testdata` in `source/ckb-script-testdata`,
-or set `CKB_SCRIPT_TESTDATA`. Fixed ELF hashes and expected VM cycles remain
-in `fixtures/vm-cycle-baseline.json`; tests never regenerate expectations.
+and `lsof`. All fixed contract binaries are included in `source/contract` and
+loaded directly from that directory; no script-path environment variable is used.
+The binaries match CKB's `script/testdata` inputs. Fixed ELF hashes and expected
+VM cycles remain in `fixtures/vm-cycle-baseline.json`; tests never regenerate
+expectations.
 
 Run serially with the framework's usual checkout name and shell-safe paths;
 existing CLI helpers share temporary key paths. No binary staging or additional

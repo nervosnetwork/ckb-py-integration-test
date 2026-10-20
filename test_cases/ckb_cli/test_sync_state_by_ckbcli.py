@@ -186,42 +186,9 @@ class TestSyncProgress(CkbTest):
             node.clean()
 
     # TEST-MAP: VT2-39
-    # TEST-EVIDENCE-BEGIN: VT2-39
-    # Evidence | Case: VT2-39 (covered)
-    # Evidence | Setup: Three actual nodes share common chain. Only bad source installs DAO-zero block through test-only bypass; receiver has normal block synchronization. Fresh class-owned nodes are explicitly configured and started in TestSyncProgress.setup_class; each class has one independent scenario.
-    # Evidence | Trigger: Deliver bad block over peer, wait for ban and exact InvalidDAO hash; disconnect/clear loopback ban; healthy separate source supplies valid extension and stops mining.
-    # Evidence | Observe: Bad height31 absent/common tip unchanged, valid canonical/pool tip convergence, three stable samples with unverified number>=tip and known header at claimed height.
-    # Evidence | Assert: assert invalid_hash and bad_rpc.get_tip_header()["hash"] == invalid_hash
-    # Evidence | Assert: workload.wait_for(
-    # Evidence |             lambda: client.get_banned_addresses(), "invalid body source banned", 45
-    # Evidence |         )
-    # Evidence | Assert: assert client.get_tip_header()["hash"] == common
-    # Evidence | Assert: assert client.get_block_by_number("0x1f") is None
-    # Evidence | Assert: assert any(
-    # Evidence |             invalid_hash in line and "InvalidDAO" in line for line in log.splitlines()
-    # Evidence |         )
-    # Evidence | Assert: workload.wait_for(
-    # Evidence |             lambda: client.get_tip_header()["hash"] == expected_tip
-    # Evidence |             and client.tx_pool_info()["tip_hash"] == expected_tip,
-    # Evidence |             "valid tip/pool convergence",
-    # Evidence |             45,
-    # Evidence |         )
-    # Evidence | Assert: assert expected_tip != invalid_hash
-    # Evidence | Assert: assert tip["hash"] == expected_tip
-    # Evidence | Assert: assert int(state["unverified_tip_number"], 16) >= int(
-    # Evidence |                 tip["number"], 16
-    # Evidence |             ), state
-    # Evidence | Assert: assert (
-    # Evidence |                 header is not None
-    # Evidence |                 and header["number"] == state["unverified_tip_number"]
-    # Evidence |             ), (state, header)
-    # Evidence | Limit: Sequential public progress regression, not deterministic private callback/reset race.
-    # Evidence | Limit: Three stable samples span finite0.2s; no continued source mining after convergence.
-    # Evidence | Limit: Static coverage only; this readability review does not establish current real-node per-Case outcomes.
-    # TEST-EVIDENCE-END: VT2-39
     def test_invalid_block_then_valid_sync_preserves_progress_floor(self):
         """
-        1. 坏来源发送会进入体验证的无效区块，确认实际失败证据。
+        1. 坏来源发送会进入区块体验证的无效区块，确认实际失败证据。
         2. 独立健康来源继续提供有效区块，等待接收节点追上有效链。
         3. 在稳定链高度检查同步状态，避免把瞬时跨 RPC 状态当成断言。
         """
@@ -232,21 +199,20 @@ class TestSyncProgress(CkbTest):
         receiver = self.receiver
         healthy = self.healthy
         bad_rpc, client = bad.getClient(), receiver.getClient()
+
+        # 1. 仅破坏区块的 DAO 字段，转发后核对封禁和对应区块哈希的 InvalidDAO 日志。
         common = bad_rpc.get_tip_header()["hash"]
         self.Miner.make_tip_height_number(bad, 31)
         invalid = copy.deepcopy(bad_rpc.get_block_by_number("0x1f"))
         invalid["header"].pop("hash")
         for transaction in invalid["transactions"]:
             transaction.pop("hash", None)
-        # All header/body roots remain correct. DAO is checked during full
-        # block verification, not by the header synchronization precheck.
+        # 保留其余头和体的根哈希，让错误在完整验块阶段暴露，而非同步区块头预检。
         invalid["header"]["dao"] = "0x" + "00" * 32
         bad_rpc.truncate(common)
         invalid_hash = bad_rpc.call("process_block_without_verify", [invalid, False])
         assert invalid_hash and bad_rpc.get_tip_header()["hash"] == invalid_hash
-        # The invalid block may cause a ban before a connection poll sees
-        # this peer. The subsequent ban AND exact InvalidDAO hash prove
-        # delivery; do not require an observable intermediate connection.
+        # 封禁可能早于连接轮询；用封禁和精确 InvalidDAO 区块哈希确认实际交付。
         bad.connected(receiver)
         workload.wait_for(
             lambda: client.get_banned_addresses(), "invalid body source banned", 45
@@ -258,12 +224,10 @@ class TestSyncProgress(CkbTest):
         assert any(
             invalid_hash in line and "InvalidDAO" in line for line in log.splitlines()
         )
-        # Both fixtures use loopback. Disconnect the bad source, then clear
-        # its IP ban so it does not also block the independent healthy node.
+        # 2. 断开坏来源并清除共享回环 IP 的封禁，再让独立健康来源继续同步。
         client.remove_node(bad.get_peer_id())
         for ban in client.get_banned_addresses():
             client.set_ban(ban["address"], "delete", None, None, None)
-        # A distinct healthy source resumes ordinary synchronization.
         self.Miner.make_tip_height_number(healthy, 32)
         expected_tip = healthy.getClient().get_tip_header()["hash"]
         healthy.connected(receiver)
@@ -281,6 +245,8 @@ class TestSyncProgress(CkbTest):
             45,
         )
         assert expected_tip != invalid_hash
+
+        # 3. 在有效链尖端重复检查同步进度下限及未验证区块头的一致性。
         for _ in range(3):
             tip = client.get_tip_header()
             state = client.call("sync_state", [])

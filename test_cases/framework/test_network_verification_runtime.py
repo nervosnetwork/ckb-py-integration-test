@@ -8,9 +8,10 @@ import pytest
 from test_cases.network_verification import runtime
 
 
-@pytest.fixture
-def script_input(tmp_path, monkeypatch):
-    script = tmp_path / "always_success"
+@pytest.fixture(params=("always_success", "current_cycles"))
+def script_input(request, tmp_path, monkeypatch):
+    script = tmp_path / "source/contract" / request.param
+    script.parent.mkdir(parents=True)
     script.write_bytes(b"fixed-fixture")
     baseline = tmp_path / "baseline.json"
     baseline.write_text(
@@ -22,27 +23,27 @@ def script_input(tmp_path, monkeypatch):
             }
         )
     )
+    monkeypatch.setattr(runtime, "ROOT", tmp_path)
     monkeypatch.setattr(runtime, "BASELINE", baseline)
-    monkeypatch.setenv("CKB_SCRIPT_TESTDATA", str(tmp_path))
     return script
 
 
 def test_fixed_script_is_used_without_modification(script_input):
     before = script_input.read_bytes()
-    assert runtime.script_path("always_success") == script_input
+    assert runtime.script_path(script_input.name) == script_input
     assert script_input.read_bytes() == before
 
 
 def test_modified_script_is_rejected(script_input):
     script_input.write_bytes(b"changed")
-    with pytest.raises(AssertionError, match="always_success"):
-        runtime.script_path("always_success")
+    with pytest.raises(AssertionError, match=script_input.name):
+        runtime.script_path(script_input.name)
 
 
 def test_missing_script_is_an_error(script_input):
     script_input.unlink()
     with pytest.raises(FileNotFoundError):
-        runtime.script_path("always_success")
+        runtime.script_path(script_input.name)
 
 
 def test_unknown_script_is_rejected(script_input):
@@ -50,19 +51,53 @@ def test_unknown_script_is_rejected(script_input):
         runtime.script_path("unknown")
 
 
-def test_default_script_directory_uses_project_source(script_input, monkeypatch):
-    monkeypatch.delenv("CKB_SCRIPT_TESTDATA")
-    monkeypatch.setattr(runtime, "ROOT", script_input.parent / "root")
-    destination = runtime.ROOT / "source/ckb-script-testdata/always_success"
-    destination.parent.mkdir(parents=True)
-    destination.write_bytes(script_input.read_bytes())
-    assert runtime.script_path("always_success") == destination
+def test_script_directory_uses_project_contract(script_input):
+    assert runtime.script_path(script_input.name) == (
+        runtime.ROOT / "source/contract" / script_input.name
+    )
 
 
-def test_relative_script_directory_becomes_absolute(script_input, monkeypatch):
-    monkeypatch.chdir(script_input.parent.parent)
-    monkeypatch.setenv("CKB_SCRIPT_TESTDATA", script_input.parent.name)
-    assert runtime.script_path("always_success") == script_input.resolve()
+def test_script_path_is_independent_of_working_directory(script_input, monkeypatch):
+    monkeypatch.chdir(script_input.parent)
+    assert runtime.script_path(script_input.name) == script_input
+
+
+def test_all_fixed_scripts_are_available_in_project_contracts():
+    for name in json.loads(runtime.BASELINE.read_text())["script_sha256"]:
+        assert runtime.script_path(name) == runtime.ROOT / "source/contract" / name
+
+
+def test_setup_failure_prints_node_log_before_cleanup(tmp_path, monkeypatch, capsys):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from test_cases.network_verification import workload
+    from test_cases.network_verification.test_budget_rbf import (
+        TestLocalConflictRecovery,
+    )
+
+    log_path = tmp_path / "node.log"
+    log_path.write_text("Listen failed: Address already in use\n")
+    node = SimpleNamespace(
+        ckb_dir=str(tmp_path),
+        prepare=Mock(side_effect=RuntimeError("startup failed")),
+        clean=Mock(side_effect=log_path.unlink),
+    )
+    monkeypatch.setattr(
+        TestLocalConflictRecovery,
+        "CkbNode",
+        SimpleNamespace(init_dev_by_port=Mock(return_value=node)),
+    )
+    monkeypatch.setattr(workload, "unused_ports", lambda count: [8101, 8102, 8103])
+
+    with pytest.raises(RuntimeError, match="startup failed"):
+        TestLocalConflictRecovery.setup_class()
+
+    output = capsys.readouterr().out
+    assert str(log_path) in output
+    assert "Listen failed: Address already in use" in output
+    node.clean.assert_called_once_with()
+    assert not log_path.exists()
 
 
 def test_restart_requires_old_process_exit_before_start(monkeypatch):

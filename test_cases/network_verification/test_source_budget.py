@@ -94,67 +94,6 @@ class TestSourceBudget(CkbTest):
 
     # TEST-MAP: VT2-06
     # TEST-MAP: VT2-07
-    # TEST-EVIDENCE-BEGIN: VT2-06
-    # Evidence | Case: VT2-06 (covered)
-    # Evidence | Setup: Cap=1 receiver; child resolves common uncommitted parent. Same child is dry-run valid then actually remotely budget-refused. Fresh class-owned nodes are explicitly configured and started in TestSourceBudget.setup_class; each class has one independent scenario.
-    # Evidence | Trigger: Local send_transaction of exactly the same tx object after hash-specific refusal, without increasing cap.
-    # Evidence | Observe: Same independently encoded hash returned, exact body/fixed cycles in pool, then committed.
-    # Evidence | Assert: assert relayed_hash == tx_hash
-    # Evidence | Assert: assert client.get_transaction(tx_hash)["tx_status"]["status"] == "unknown"
-    # Evidence | Assert: assert client.send_transaction(tx) == tx_hash
-    # Evidence | Assert: assert committed["tx_status"]["status"] == "committed"
-    # Evidence | Assert: wait_for(
-    # Evidence |         lambda: len(remote_refusals(node, tx_hash)) >= count,
-    # Evidence |         f"processed remote CPU-budget refusal {count} for {tx_hash}",
-    # Evidence |         45,
-    # Evidence |     )
-    # Evidence | Assert: assert tx_hash not in pool_transactions(client)
-    # Evidence | Assert: assert result["tx_status"]["status"] == "unknown", result
-    # Evidence | Assert: assert result["transaction"] is None
-    # Evidence | Assert: assert client.get_banned_addresses() == []
-    # Evidence | Assert: assert node.get_connected_count() >= 1
-    # Evidence | Assert: assert response["tx_status"]["status"] in ("pending", "proposed"), response
-    # Evidence | Assert: assert body.pop("hash") == tx_hash
-    # Evidence | Assert: assert body == tx
-    # Evidence | Assert: assert int(response["cycles"], 16) == cycles
-    # Evidence | Assert: assert int(pool_transactions(client)[tx_hash]["cycles"], 16) == cycles
-    # Evidence | Limit: Combined with VT2-07 setup; preceding dry-run does not invalidate the oracle because subsequent remote refusal explicitly occurs.
-    # Evidence | Limit: Static coverage only; this readability review does not establish current real-node per-Case outcomes.
-    # TEST-EVIDENCE-END: VT2-06
-    # TEST-EVIDENCE-BEGIN: VT2-07
-    # Evidence | Case: VT2-07 (covered)
-    # Evidence | Setup: Both nodes hold same pending parent; receiver has no successful prior child validation. Child hash is computed without node verification. Fresh class-owned nodes are explicitly configured and started in TestSourceBudget.setup_class; each class has one independent scenario.
-    # Evidence | Trigger: Dry-run child, compare state, relay the same bytes at cap1, then submit locally.
-    # Evidence | Observe: Fixed135598681 cycles,100CKB fee, unchanged pool/unknown child, pending parent, actual subsequent remote refusal and eventual same-hash local success.
-    # Evidence | Assert: assert status["status"] == "pending" and status["block_hash"] is None
-    # Evidence | Assert: assert receiver.get_connected_count() == 0
-    # Evidence | Assert: assert int(preview["cycles"], 16) == workload.BUDGET_CYCLES
-    # Evidence | Assert: assert int(preview["fee"], 16) == 100 * workload.CKB
-    # Evidence | Assert: assert client.get_raw_tx_pool(False) == before
-    # Evidence | Assert: assert client.get_transaction(tx_hash)["tx_status"]["status"] == "unknown"
-    # Evidence | Assert: assert client.get_transaction(parent)["tx_status"]["status"] == "pending"
-    # Evidence | Assert: assert relayed_hash == tx_hash
-    # Evidence | Assert: assert client.get_transaction(parent)["tx_status"]["status"] == "pending"
-    # Evidence | Assert: assert client.get_transaction(tx_hash)["tx_status"]["status"] == "unknown"
-    # Evidence | Assert: assert client.send_transaction(tx) == tx_hash
-    # Evidence | Assert: wait_for(
-    # Evidence |         lambda: len(remote_refusals(node, tx_hash)) >= count,
-    # Evidence |         f"processed remote CPU-budget refusal {count} for {tx_hash}",
-    # Evidence |         45,
-    # Evidence |     )
-    # Evidence | Assert: assert tx_hash not in pool_transactions(client)
-    # Evidence | Assert: assert result["tx_status"]["status"] == "unknown", result
-    # Evidence | Assert: assert result["transaction"] is None
-    # Evidence | Assert: assert client.get_banned_addresses() == []
-    # Evidence | Assert: assert node.get_connected_count() >= 1
-    # Evidence | Assert: assert response["tx_status"]["status"] in ("pending", "proposed"), response
-    # Evidence | Assert: assert body.pop("hash") == tx_hash
-    # Evidence | Assert: assert body == tx
-    # Evidence | Assert: assert int(response["cycles"], 16) == cycles
-    # Evidence | Assert: assert int(pool_transactions(client)[tx_hash]["cycles"], 16) == cycles
-    # Evidence | Limit: Proves no observable dry-run cache bypass, not private VM-call/cache counters.
-    # Evidence | Limit: Static coverage only; this readability review does not establish current real-node per-Case outcomes.
-    # TEST-EVIDENCE-END: VT2-07
     def test_network_refusal_does_not_block_dry_run_or_local_submission(self):
         """
         1. 两个节点都保留同一未确认父交易，构造花费父输出的慢交易。
@@ -164,8 +103,7 @@ class TestSourceBudget(CkbTest):
         source = self.source
         receiver = self.receiver
         client = receiver.getClient()
-        # Both nodes know a still-uncommitted parent; the child resolves
-        # its input from the pool rather than a confirmed genesis cell.
+        # 1. 两个节点都保留未确认父交易，让慢交易从池中的父输出解析输入。
         parent_tx = workload.build_transaction(source)
         parent_tx["inputs"].extend(workload.build_transaction(source, cell=7)["inputs"])
         change = copy.deepcopy(parent_tx["outputs"][0])
@@ -179,8 +117,8 @@ class TestSourceBudget(CkbTest):
             assert status["status"] == "pending" and status["block_hash"] is None
         tx = workload.build_transaction(source, slow=True)
         tx["inputs"][0]["previous_output"] = {"tx_hash": parent, "index": "0x0"}
-        # Reuse the existing packed raw-transaction hash helper. No node
-        # has yet validated this child; actual sender RPC must match it.
+        # 2. 先预检 cycles、手续费和池状态，再实际转发，确认网络路径仍然超时。
+        # 提前计算原始交易 hash，随后与发送节点返回的 hash 对照。
         tx_hash = transaction_hash(tx)
         assert receiver.get_connected_count() == 0
         before = client.get_raw_tx_pool(False)
@@ -205,9 +143,10 @@ class TestSourceBudget(CkbTest):
         workload.assert_remote_budget_refusal(receiver, relayed_hash)
         assert relayed_hash == tx_hash
         assert client.get_transaction(parent)["tx_status"]["status"] == "pending"
-        # Actual subsequent remote refusal shows the dry-run did not warm
-        # a success cache that bypasses the cap.
+        # 后续真实网络超时说明预检没有使该交易绕过网络预算。
         assert client.get_transaction(tx_hash)["tx_status"]["status"] == "unknown"
+
+        # 3. 本地提交完全相同的交易，检查固定 cycles、入池和最终确认状态。
         assert client.send_transaction(tx) == tx_hash
         workload.assert_pool_transaction(receiver, tx_hash, tx, workload.BUDGET_CYCLES)
         committed = self.Miner.miner_until_tx_committed(receiver, tx_hash)
@@ -298,35 +237,6 @@ class TestPersistedBudget(CkbTest):
             node.clean()
 
     # TEST-MAP: VT2-09
-    # TEST-EVIDENCE-BEGIN: VT2-09
-    # Evidence | Case: VT2-09 (covered)
-    # Evidence | Setup: Slow transaction remotely refused under cap1, then locally admitted; full body/cycles saved; source peer disconnected. Fresh class-owned nodes are explicitly configured and started in TestPersistedBudget.setup_class; each class has one independent scenario.
-    # Evidence | Trigger: Call workload.restart_and_assert_new_process on the same directory: identify the listener by PID and owning cwd, wait for old PID disappearance and no listener, then require a distinct new listening PID. No peer retransmission or manual resubmit; query restored pool and mine target.
-    # Evidence | Observe: Old process disappearance and distinct owned new listener are required before pool reads. Same-directory restored transaction body/cycles equal pre-shutdown values, no peer is connected, and transaction finally commits.
-    # Evidence | Assert: assert client.send_transaction(tx) == tx_hash
-    # Evidence | Assert: assert receiver.get_connected_count() == 0
-    # Evidence | Assert: assert after["transaction"] == before["transaction"]
-    # Evidence | Assert: assert after["cycles"] == before["cycles"]
-    # Evidence | Assert: assert committed["tx_status"]["status"] == "committed"
-    # Evidence | Assert: assert response["tx_status"]["status"] in ("pending", "proposed"), response
-    # Evidence | Assert: assert body.pop("hash") == tx_hash
-    # Evidence | Assert: assert body == tx
-    # Evidence | Assert: assert int(response["cycles"], 16) == cycles
-    # Evidence | Assert: assert int(pool_transactions(client)[tx_hash]["cycles"], 16) == cycles
-    # Evidence | Assert: workload.restart_and_assert_new_process(receiver)
-    # Evidence | Assert: assert result.returncode in (0, 1), result.stderr
-    # Evidence | Assert: assert len(pids) == 1, pids
-    # Evidence | Assert: assert paths == [Path(node.ckb_dir).resolve()], (pid, paths, node.ckb_dir)
-    # Evidence | Assert: assert previous is not None
-    # Evidence | Assert: wait_for(
-    # Evidence |         lambda: not _process_exists(previous), f"old node PID {previous} exited", 20
-    # Evidence |     )
-    # Evidence | Assert: assert _node_process_id(node) is None
-    # Evidence | Assert: current = wait_for(lambda: _node_process_id(node), "restarted node listening", 20)
-    # Evidence | Assert: assert current != previous, (previous, current)
-    # Evidence | Limit: Restart ownership uses lsof PID/cwd checks and a bounded disappearance wait, not a retained subprocess handle; failure to terminate or identify the process fails the test. Exact graceful-exit status is not recorded, but old in-memory state cannot satisfy the post-boundary pool oracle.
-    # Evidence | Limit: Static coverage only; this readability review does not establish current real-node per-Case outcomes.
-    # TEST-EVIDENCE-END: VT2-09
     def test_persisted_slow_transaction_reloads_without_network_budget(self):
         """
         1. 网络慢交易超时后，通过本地提交使其入池并保存交易体/cycles。
@@ -335,6 +245,8 @@ class TestPersistedBudget(CkbTest):
         """
         source = self.source
         receiver = self.receiver
+
+        # 1. 网络慢交易超时后本地提交，记录入池交易体和 cycles。
         tx = workload.build_transaction(source, slow=True)
         source.connected(receiver)
         workload.wait_for(
@@ -352,12 +264,16 @@ class TestPersistedBudget(CkbTest):
         before = workload.assert_pool_transaction(
             receiver, tx_hash, tx, workload.BUDGET_CYCLES
         )
+
+        # 2. 断开对端并冷重启同一节点目录，不重新提交或转发该交易。
         client.remove_node(source.get_peer_id())
         workload.wait_for(
             lambda: receiver.get_connected_count() == 0, "isolate persisted pool"
         )
         workload.restart_and_assert_new_process(receiver)
         assert receiver.get_connected_count() == 0
+
+        # 3. 检查持久化恢复后的交易体和 cycles 不变，并将恢复交易打包确认。
         after = workload.assert_pool_transaction(
             receiver, tx_hash, tx, workload.BUDGET_CYCLES
         )

@@ -39,39 +39,13 @@ class TestCachedContext(CkbTest):
         cls.node.clean()
 
     # TEST-MAP: VT2-52
-    # TEST-EVIDENCE-BEGIN: VT2-52
-    # Evidence | Case: VT2-52 (covered)
-    # Evidence | Setup: Signed absolute-height-since transaction first accepted mature, removed, then chain truncated to still-confirmed funding height. The independent node and initial 30-block chain are prepared in TestCachedContext.setup_class. node.prepare uses existing CURRENT_TEST/download/current directly; the redundant manifest-selected binary copy is removed.
-    # Evidence | Trigger: Both RPC methods reject same bytes while immature; mine back to mature height, preview and resubmit unchanged tx.
-    # Evidence | Observe: Immature from both endpoints/empty pool; later equal cycles, same hash and membership.
-    # Evidence | Assert: assert tx["inputs"][0]["since"] == hex(high_height)
-    # Evidence | Assert: assert client.get_block_hash(hex(low_height)) == low_hash
-    # Evidence | Assert: assert client.get_tip_block_number() == high_height
-    # Evidence | Assert: assert high_cycles > 0
-    # Evidence | Assert: assert client.remove_transaction(accepted_hash) is True
-    # Evidence | Assert: assert client.get_raw_tx_pool(False) == {"pending": [], "proposed": []}
-    # Evidence | Assert: assert client.get_tip_block_number() == low_height
-    # Evidence | Assert: assert client.get_transaction(split)["tx_status"]["block_hash"] == low_hash
-    # Evidence | Assert: with pytest.raises(Exception, match="Immature"):
-    # Evidence |             client.test_tx_pool_accept(tx, "passthrough")
-    # Evidence | Assert: with pytest.raises(Exception, match="Immature"):
-    # Evidence |             client.send_transaction(tx)
-    # Evidence | Assert: assert client.get_raw_tx_pool(False) == {"pending": [], "proposed": []}
-    # Evidence | Assert: assert client.get_tip_block_number() == high_height
-    # Evidence | Assert: assert int(preview["cycles"], 16) == high_cycles
-    # Evidence | Assert: assert client.send_transaction(tx) == accepted_hash
-    # Evidence | Assert: assert accepted_hash in set(client.get_raw_tx_pool(False)["pending"]) | set(
-    # Evidence |             client.get_raw_tx_pool(False)["proposed"]
-    # Evidence |         )
-    # Evidence | Limit: Extra warm-script/truncate control; no private cache-hit count claimed.
-    # Evidence | Limit: Static coverage only; this readability review does not establish current real-node per-Case outcomes.
-    # TEST-EVIDENCE-END: VT2-52
     def test_cached_script_proof_does_not_skip_since_after_truncate(self):
         """
         1. 先在成熟高度接受带 since 的交易，记录 cycles 后将其移出池。
         2. 截断到输入已确认但 since 未成熟的高度，检查两个 RPC 都拒绝。
         3. 再次挖到成熟高度，检查相同交易的 hash/cycles 和入池结果。
         """
+        # 1. 准备已确认输入，在 since 成熟高度接受交易，记录 cycles 后移出池。
         node = self.node
         client = node.getClient()
         key = self.Config.ACCOUNT_PRIVATE_2
@@ -139,8 +113,7 @@ class TestCachedContext(CkbTest):
         }
         assert client.remove_transaction(accepted_hash) is True
         assert client.get_raw_tx_pool(False) == {"pending": [], "proposed": []}
-        # The same raw transaction and input outpoint retain the semantic
-        # script key; only the tip-dependent absolute since result changes.
+        # 2. 保持交易及输入不变，仅截断链高度，检查预检和提交都返回 Immature。
         client.truncate(low_hash)
         assert client.get_tip_block_number() == low_height
         assert client.get_transaction(split)["tx_status"]["block_hash"] == low_hash
@@ -149,6 +122,8 @@ class TestCachedContext(CkbTest):
         with pytest.raises(Exception, match="Immature"):
             client.send_transaction(tx)
         assert client.get_raw_tx_pool(False) == {"pending": [], "proposed": []}
+
+        # 3. 再次达到成熟高度，检查同一交易的 cycles、hash 和入池状态。
         self.Miner.make_tip_height_number(node, high_height)
         assert client.get_tip_block_number() == high_height
         preview = client.test_tx_pool_accept(tx, "passthrough")

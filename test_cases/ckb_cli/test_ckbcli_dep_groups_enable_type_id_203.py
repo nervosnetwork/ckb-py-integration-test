@@ -43,34 +43,13 @@ class TestCkbCliMultisig203(CkbTest):
         cls.node.clean()
 
     # TEST-MAP: VT2-27
-    # TEST-EVIDENCE-BEGIN: VT2-27
-    # Evidence | Case: VT2-27 (covered)
-    # Evidence | Setup: Valid CLI deployment creates Type ID on independent input; second confirmed funding input builds a signed invalid create retaining wrong32-byte hash.
-    # Evidence | Trigger: Mine valid creation and recompute expected args from actual first input/output0; call both RPC methods on invalid independent transaction.
-    # Evidence | Observe: Valid hash derivation/32-byte size and commitment; invalid ValidationFailure -3 at Outputs[0].Type and no pending/proposed membership.
-    # Evidence | Assert: assert (
-    # Evidence |             output_type is not None
-    # Evidence |         ), "Failed: Output does not contain a 'type' field."
-    # Evidence | Assert: assert output_type["args"] == expected
-    # Evidence | Assert: assert len(bytes.fromhex(output_type["args"][2:])) == 32
-    # Evidence | Assert: assert output["type"]["args"] != correct_hash
-    # Evidence | Assert: assert len(bytes.fromhex(output["type"]["args"][2:])) == 32
-    # Evidence | Assert: with self.assertRaises(Exception) as error:
-    # Evidence |                 client.call(method, [invalid, "passthrough"])
-    # Evidence | Assert: assert "ValidationFailure" in reason and "error code -3" in reason, reason
-    # Evidence | Assert: assert "Outputs[0].Type" in reason, reason
-    # Evidence | Assert: assert tx_hash not in pool["pending"] and tx_hash not in pool["proposed"]
-    # Evidence | Assert: raise Exception(
-    # Evidence |                 f"status:{tx_response['tx_status']['status']},reason:{tx_response['tx_status']['reason']}"
-    # Evidence |             )
-    # Evidence | Assert: raise Exception(
-    # Evidence |         f"miner 100 block ,but tx_response always pending:{tx_hash}，tx_response:{tx_response}"
-    # Evidence |     )
-    # Evidence | Limit: Representative creation hash rule only, not complete Type ID update/destroy matrix.
-    # Evidence | Limit: Static coverage only; this readability review does not establish current real-node per-Case outcomes.
-    # TEST-EVIDENCE-END: VT2-27
     def test_01_dep_groups_enable_type_id_true(self):
-        # 1. deploy contract return deploy tx hash
+        """
+        1. 为合约和 dep_group 启用 TYPE_ID，部署并取得 dep_group 交易 hash。
+        2. 挖矿确认部署交易，按首个输入和输出索引核对 TYPE_ID args。
+        3. 换用另一已确认输入并复用原 TYPE_ID args，检查创建哈希不匹配的交易被拒绝。
+        """
+        # 1. 启用合约和 dep_group 的 TYPE_ID，返回 dep_group 部署交易 hash。
         dep_group_tx_hash = self.Contract.deploy_ckb_contract(
             self.Config.ACCOUNT_PRIVATE_2,
             self.Config.ALWAYS_SUCCESS_CONTRACT_PATH,
@@ -79,10 +58,9 @@ class TestCkbCliMultisig203(CkbTest):
             return_tx="dep_group_tx",
             api_url=self.node.getClient().url,
         )
-        # 2. miner until deploy contrct tx hash
+        # 2. 确认部署交易，检查类型脚本存在且 args 等于独立计算的 32 字节哈希。
         tx_response = self.Miner.miner_until_tx_committed(self.node, dep_group_tx_hash)
         output = tx_response["transaction"]["outputs"][0]
-        # 3. check hash_type
         output_type = output.get("type")
         assert (
             output_type is not None
@@ -95,6 +73,8 @@ class TestCkbCliMultisig203(CkbTest):
         )
         assert output_type["args"] == expected
         assert len(bytes.fromhex(output_type["args"][2:])) == 32
+
+        # 3. 使用另一输入复用原 TYPE_ID args，检查创建哈希不匹配的交易被拒绝。
         self._assert_wrong_creation_hash_rejected(output_type)
         self.did_pass = True
 

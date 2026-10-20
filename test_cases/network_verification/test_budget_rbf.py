@@ -145,85 +145,21 @@ class TestBudgetReplacement(CkbTest):
 
     # TEST-MAP: VT2-48
     # TEST-MAP: VT2-29
-    # TEST-EVIDENCE-BEGIN: VT2-29
-    # Evidence | Case: VT2-29 (covered)
-    # Evidence | Setup: Acknowledged rejected_transaction TCP subscription before trigger; receiver cap1; slow candidate plus independent normal RBF control. Fresh class-owned nodes are explicitly configured and started in TestBudgetReplacement.setup_class; each class has one independent scenario. Socket creation, subscribe request, ACK and event validation are explicit; handshake and event processing share the close-finally.
-    # Evidence | Trigger: Slow network refusal, fresh same-hash request, then normal high-fee replacement; consume same stream until explicit positive event and drain0.5s.
-    # Evidence | Observe: Target slow hash absent from all observed events; positive normal_hash/RBFRejected event and live stream asserted.
-    # Evidence | Assert: assert ack["id"] == 1 and ack.get("result") is not None, ack
-    # Evidence | Assert: assert data, "rejected_transaction stream closed"
-    # Evidence | Assert: assert value["params"]["subscription"] == subscription_id
-    # Evidence | Assert: assert event is not None, "ordinary RBF positive event missing"
-    # Evidence | Assert: assert event_hash != tx_hash, event
-    # Evidence | Assert: assert positive
-    # Evidence | Assert: assert event[0]["transaction"]["hash"] != tx_hash, event
-    # Evidence | Assert: assert refusals >= 1
-    # Evidence | Assert: assert other.getClient().send_transaction(candidate) == tx_hash
-    # Evidence | Assert: workload.wait_for(
-    # Evidence |                 lambda: len(workload.transaction_requests(other, tx_hash))
-    # Evidence |                 > requests_before,
-    # Evidence |                 f"fresh GetRelayTransactions for {tx_hash}",
-    # Evidence |                 45,
-    # Evidence |             )
-    # Evidence | Limit: Finite negative window plus positive same-stream barrier; no proof of private TryFrom execution or arbitrarily delayed event absence.
-    # Evidence | Limit: Static coverage only; this readability review does not establish current real-node per-Case outcomes.
-    # TEST-EVIDENCE-END: VT2-29
-    # TEST-EVIDENCE-BEGIN: VT2-48
-    # Evidence | Case: VT2-48 (covered)
-    # Evidence | Setup: Accepted parentA/childC on fixed tip with complete verbose pool and response snapshots; slow B spends parent input with higher fee. Fresh class-owned nodes are explicitly configured and started in TestBudgetReplacement.setup_class; each class has one independent scenario.
-    # Evidence | Trigger: Relay B at cap1, fresh re-request, compare unchanged A/C, then locally submit exactly same B as successful replacement control.
-    # Evidence | Observe: Full pool and bodies/status/cycles snapshots unchanged before local success; B unknown/nonmember; then B admitted and both A/C RBFRejected; tip fixed.
-    # Evidence | Assert: assert client.get_raw_tx_pool(True) == before
-    # Evidence | Assert: assert {
-    # Evidence |                 key: client.get_transaction(key) for key in (parent, child)
-    # Evidence |             } == bodies
-    # Evidence | Assert: assert client.get_tip_header()["hash"] == tip
-    # Evidence | Assert: assert {
-    # Evidence |                 key: client.get_transaction(key) for key in (parent, child)
-    # Evidence |             } == bodies
-    # Evidence | Assert: assert client.send_transaction(candidate) == tx_hash
-    # Evidence | Assert: assert (
-    # Evidence |                     status["status"] == "rejected" and "RBFRejected" in status["reason"]
-    # Evidence |                 )
-    # Evidence | Assert: assert client.get_tip_header()["hash"] == tip
-    # Evidence | Assert: wait_for(
-    # Evidence |         lambda: len(remote_refusals(node, tx_hash)) >= count,
-    # Evidence |         f"processed remote CPU-budget refusal {count} for {tx_hash}",
-    # Evidence |         45,
-    # Evidence |     )
-    # Evidence | Assert: assert tx_hash not in pool_transactions(client)
-    # Evidence | Assert: assert result["tx_status"]["status"] == "unknown", result
-    # Evidence | Assert: assert result["transaction"] is None
-    # Evidence | Assert: assert client.get_banned_addresses() == []
-    # Evidence | Assert: assert node.get_connected_count() >= 1
-    # Evidence | Assert: assert refusals >= 1
-    # Evidence | Assert: assert other.getClient().send_transaction(candidate) == tx_hash
-    # Evidence | Assert: workload.wait_for(
-    # Evidence |                 lambda: len(workload.transaction_requests(other, tx_hash))
-    # Evidence |                 > requests_before,
-    # Evidence |                 f"fresh GetRelayTransactions for {tx_hash}",
-    # Evidence |                 45,
-    # Evidence |             )
-    # Evidence | Assert: assert response["tx_status"]["status"] in ("pending", "proposed"), response
-    # Evidence | Assert: assert body.pop("hash") == tx_hash
-    # Evidence | Assert: assert body == tx
-    # Evidence | Assert: assert int(response["cycles"], 16) == cycles
-    # Evidence | Assert: assert int(pool_transactions(client)[tx_hash]["cycles"], 16) == cycles
-    # Evidence | Limit: Public pool-state protection, not private spend-owner map.
-    # Evidence | Limit: Static coverage only; this readability review does not establish current real-node per-Case outcomes.
-    # TEST-EVIDENCE-END: VT2-48
     def test_network_timeout_preserves_parent_child_until_same_candidate_local_rbf(
         self,
     ):
         """
         1. 接收节点先保存父子交易，记录池、交易体和链尖端。
         2. 监听拒绝事件，再网络转发慢替换交易；检查超时不破坏父子状态。
-        3. 用普通 RBF 事件校验订阅，再本地提交同一候选，检查替换成功。
+        3. 用普通 RBF 事件校验订阅，并在有限观察窗口内排除慢交易的拒绝事件。
+        4. 本地提交同一慢替换交易，检查父子交易被替换且链尖端不变。
         """
         source = self.source
         receiver = self.receiver
         other = self.other
         client = receiver.getClient()
+
+        # 1. 建立父子交易，保存完整池状态、交易体和链尖端作为对照。
         parent_tx = workload.build_transaction(receiver)
         parent = client.send_transaction(parent_tx)
         child_tx = copy.deepcopy(parent_tx)
@@ -236,7 +172,7 @@ class TestBudgetReplacement(CkbTest):
         before = client.get_raw_tx_pool(True)
         bodies = {key: client.get_transaction(key) for key in (parent, child)}
         tip = client.get_tip_header()["hash"]
-        # 明确建立 TCP 订阅并校验 ACK；清理覆盖握手和后续事件断言。
+        # 2. 建立拒绝事件订阅并校验 ACK，再转发慢替换交易并检查原父子状态。
         host, port = toml.loads(Path(receiver.ckb_toml_path).read_text())["rpc"][
             "tcp_listen_address"
         ].rsplit(":", 1)
@@ -273,8 +209,7 @@ class TestBudgetReplacement(CkbTest):
                 source, tx_hash, candidate, workload.BUDGET_CYCLES
             )
             workload.assert_remote_budget_refusal(receiver, tx_hash)
-            # A fresh real GetRelayTransactions confirms release of the
-            # first attempt's known marker before state/event assertions.
+            # 用另一节点重发，并观察新的 GetRelayTransactions 和再次超时。
             refusals = len(workload.remote_refusals(receiver, tx_hash))
             requests_before = len(workload.transaction_requests(other, tx_hash))
             assert refusals >= 1
@@ -299,6 +234,8 @@ class TestBudgetReplacement(CkbTest):
                 key: client.get_transaction(key) for key in (parent, child)
             } == bodies
             assert client.get_tip_header()["hash"] == tip
+
+            # 3. 触发普通 RBF 拒绝事件，验证订阅有效，并检查没有慢交易拒绝事件。
             normal = workload.build_transaction(receiver, cell=2)
             normal_hash = client.send_transaction(normal)
             replacement = copy.deepcopy(normal)
@@ -324,7 +261,7 @@ class TestBudgetReplacement(CkbTest):
                     event_hash == normal_hash and event[1]["type"] == "RBFRejected"
                 )
             assert positive
-            # Finite negative window plus the same-stream positive barrier.
+            # 在同一订阅已收到正向事件后，再观察一个有限的负向窗口。
             deadline = time.monotonic() + 0.5
             while time.monotonic() < deadline:
                 value, subscription_buffer = _read_json_line(
@@ -342,6 +279,8 @@ class TestBudgetReplacement(CkbTest):
             assert {
                 key: client.get_transaction(key) for key in (parent, child)
             } == bodies
+
+            # 4. 本地提交同一候选，检查原父子交易均因 RBF 被替换，链尖端不变。
             assert client.send_transaction(candidate) == tx_hash
             workload.assert_pool_transaction(
                 receiver, tx_hash, candidate, workload.BUDGET_CYCLES
@@ -428,6 +367,13 @@ class TestLocalConflictRecovery(CkbTest):
             cls.Miner.make_tip_height_number(cls.source, 30)
             workload.sync_blocks(cls.source, cls.receiver, 1, 30)
         except Exception:
+            for node in cls.nodes:
+                log_path = Path(node.ckb_dir) / "node.log"
+                if log_path.is_file():
+                    print(
+                        f"\n--- startup failure: {log_path} ---\n"
+                        f"{log_path.read_text(errors='replace')[-8000:]}"
+                    )
             cls.teardown_class()
             raise
 
@@ -440,36 +386,6 @@ class TestLocalConflictRecovery(CkbTest):
             node.clean()
 
     # TEST-MAP: VT2-45
-    # TEST-EVIDENCE-BEGIN: VT2-45
-    # Evidence | Case: VT2-45 (covered)
-    # Evidence | Setup: A spendsX, slow and remotely refused at cap1; receiver then isolated. B spendsX/Y fee150CKB, A fee100, C spendsY fee200. Fresh class-owned nodes are explicitly configured and started in TestLocalConflictRecovery.setup_class; each class has one independent scenario.
-    # Evidence | Trigger: Submit A locally once, require RBFRejected; submit C; perform no further A submit/notify/relay while waiting for automatic readmission.
-    # Evidence | Observe: A absent after local error; later exact body/cycles in pool, B gone/C present, no peers and both A/C committed.
-    # Evidence | Assert: assert error["code"] == -1111 and "RBFRejected" in error["data"], error
-    # Evidence | Assert: assert tx_hash not in workload.pool_transactions(client)
-    # Evidence | Assert: assert b_hash not in workload.pool_transactions(client)
-    # Evidence | Assert: assert c_hash in workload.pool_transactions(client)
-    # Evidence | Assert: assert receiver.get_connected_count() == 0
-    # Evidence | Assert: assert client.get_transaction(tx_hash)["tx_status"]["status"] == "committed"
-    # Evidence | Assert: assert client.get_transaction(c_hash)["tx_status"]["status"] == "committed"
-    # Evidence | Assert: assert response["tx_status"]["status"] in ("pending", "proposed"), response
-    # Evidence | Assert: assert body.pop("hash") == tx_hash
-    # Evidence | Assert: assert body == tx
-    # Evidence | Assert: assert int(response["cycles"], 16) == cycles
-    # Evidence | Assert: assert int(pool_transactions(client)[tx_hash]["cycles"], 16) == cycles
-    # Evidence | Assert: wait_for(
-    # Evidence |         lambda: len(remote_refusals(node, tx_hash)) >= count,
-    # Evidence |         f"processed remote CPU-budget refusal {count} for {tx_hash}",
-    # Evidence |         45,
-    # Evidence |     )
-    # Evidence | Assert: assert tx_hash not in pool_transactions(client)
-    # Evidence | Assert: assert result["tx_status"]["status"] == "unknown", result
-    # Evidence | Assert: assert result["transaction"] is None
-    # Evidence | Assert: assert client.get_banned_addresses() == []
-    # Evidence | Assert: assert node.get_connected_count() >= 1
-    # Evidence | Limit: Public automatic recovery with no-resubmit/no-peer control; private queue/cache internals not observed.
-    # Evidence | Limit: Static coverage only; this readability review does not establish current real-node per-Case outcomes.
-    # TEST-EVIDENCE-END: VT2-45
     def test_locally_rejected_slow_transaction_recovers_when_conflict_is_replaced(self):
         """
         1. 慢交易 A 网络超时后隔离对端；快速交易 B 占用 A 的输入。
@@ -479,6 +395,8 @@ class TestLocalConflictRecovery(CkbTest):
         source = self.source
         receiver = self.receiver
         client = receiver.getClient()
+
+        # 1. 慢交易 A 网络超时后隔离对端，再提交占用其输入的快速交易 B。
         candidate = workload.build_transaction(source, slow=True)
         source.connected(receiver)
         workload.wait_for(
@@ -497,13 +415,15 @@ class TestLocalConflictRecovery(CkbTest):
         workload.wait_for(
             lambda: receiver.get_connected_count() == 0, "isolate local retry"
         )
-        # B spends X/Y, A only X. A's 100 CKB fee is valid but insufficient
-        # to replace B (150 CKB). C replaces B using only Y (200 CKB).
+        # A 花费 X、手续费 100 CKB；B 花费 X/Y、手续费 150 CKB。
+        # 后续 C 只花费 Y、手续费 200 CKB，替换 B 后释放 X。
         b = workload.build_transaction(receiver)
         y = workload.build_transaction(receiver, cell=1)
         b["inputs"].extend(y["inputs"])
         b["outputs"][0]["capacity"] = hex((13000 - 150) * workload.CKB)
         b_hash = client.send_transaction(b)
+
+        # 2. 本地提交 A，检查手续费不足以替换 B，返回 RBFRejected 且 A 未入池。
         response = requests.post(
             client.url,
             json={
@@ -518,11 +438,12 @@ class TestLocalConflictRecovery(CkbTest):
         error = response.json()["error"]
         assert error["code"] == -1111 and "RBFRejected" in error["data"], error
         assert tx_hash not in workload.pool_transactions(client)
+
+        # 3. 用 C 替换 B，保持断连且不重交 A，检查 A 自动恢复并与 C 一起确认。
         c = copy.deepcopy(y)
         c["outputs"][0]["capacity"] = hex((6500 - 200) * workload.CKB)
         c_hash = client.send_transaction(c)
-        # No further submit/notify/relay of A: this is the queued local
-        # recovery route, not synchronous direct RPC admission.
+        # 不再提交、通知或转发 A，确保观察的是本地队列自动恢复。
         workload.assert_pool_transaction(
             receiver, tx_hash, candidate, workload.BUDGET_CYCLES
         )

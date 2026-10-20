@@ -121,65 +121,6 @@ class TestRemoteTimeBudgetPeer(CkbTest):
 
     # TEST-MAP: VT2-01
     # TEST-MAP: VT2-02
-    # TEST-EVIDENCE-BEGIN: VT2-01
-    # Evidence | Case: VT2-01 (covered)
-    # Evidence | Setup: Fresh cap=1 receiver on common 30-block dev chain; independent fast genesis input cell=1 has never been validated by receiver. Fresh class-owned nodes are explicitly configured and started in TestRemoteTimeBudgetPeer.setup_class; each class has one independent scenario.
-    # Evidence | Trigger: Original slow sender sends a distinct fast transaction through ordinary real-node relay after the slow refusal/re-request.
-    # Evidence | Observe: Receiver pending/proposed with exact full body and fixed537 cycles in both RPC and verbose pool; original source peer remains connected.
-    # Evidence | Assert: assert response["tx_status"]["status"] in ("pending", "proposed"), response
-    # Evidence | Assert: assert body.pop("hash") == tx_hash
-    # Evidence | Assert: assert body == tx
-    # Evidence | Assert: assert int(response["cycles"], 16) == cycles
-    # Evidence | Assert: assert int(pool_transactions(client)[tx_hash]["cycles"], 16) == cycles
-    # Evidence | Assert: assert any(
-    # Evidence |             peer["node_id"] == source.get_peer_id()
-    # Evidence |             for peer in receiver.getClient().get_peers()
-    # Evidence |         )
-    # Evidence | Assert: assert receiver.getClient().get_banned_addresses() == []
-    # Evidence | Limit: Honest node relay supplies truthful cycles; no malformed packet or exact CPU-time threshold is claimed.
-    # Evidence | Limit: Static coverage only; this readability review does not establish current real-node per-Case outcomes.
-    # TEST-EVIDENCE-END: VT2-01
-    # TEST-EVIDENCE-BEGIN: VT2-02
-    # Evidence | Case: VT2-02 (covered)
-    # Evidence | Setup: Valid64-group slow transaction at fixed135598681 cycles; below1e9 configured verification cycles and1e10 block cycles. Fresh low-cap receiver. Fresh class-owned nodes are explicitly configured and started in TestRemoteTimeBudgetPeer.setup_class; each class has one independent scenario.
-    # Evidence | Trigger: Original source locally admits and relays slow bytes; independent ordinary peer reannounces same hash/bytes; original source subsequently relays independent fast input.
-    # Evidence | Observe: Hash-specific CPU-budget log, increased real GetRelayTransactions count, repeated unknown/nonmember/no-ban state, and successful original-peer fast admission.
-    # Evidence | Assert: wait_for(
-    # Evidence |         lambda: len(remote_refusals(node, tx_hash)) >= count,
-    # Evidence |         f"processed remote CPU-budget refusal {count} for {tx_hash}",
-    # Evidence |         45,
-    # Evidence |     )
-    # Evidence | Assert: assert tx_hash not in pool_transactions(client)
-    # Evidence | Assert: assert result["tx_status"]["status"] == "unknown", result
-    # Evidence | Assert: assert result["transaction"] is None
-    # Evidence | Assert: assert client.get_banned_addresses() == []
-    # Evidence | Assert: assert node.get_connected_count() >= 1
-    # Evidence | Assert: assert refusals >= 1
-    # Evidence | Assert: assert other.getClient().send_transaction(slow) == tx_hash
-    # Evidence | Assert: workload.wait_for(
-    # Evidence |             lambda: len(workload.transaction_requests(other, tx_hash))
-    # Evidence |             > requests_before,
-    # Evidence |             f"fresh GetRelayTransactions for {tx_hash}",
-    # Evidence |             45,
-    # Evidence |         )
-    # Evidence | Assert: assert any(
-    # Evidence |             peer["node_id"] == source.get_peer_id()
-    # Evidence |             for peer in receiver.getClient().get_peers()
-    # Evidence |         )
-    # Evidence | Assert: assert receiver.getClient().get_banned_addresses() == []
-    # Evidence | Assert: assert (
-    # Evidence |             receiver.getClient().get_transaction(tx_hash)["tx_status"]["status"]
-    # Evidence |             == "unknown"
-    # Evidence |         )
-    # Evidence | Assert: assert response["tx_status"]["status"] in ("pending", "proposed"), response
-    # Evidence | Assert: assert body.pop("hash") == tx_hash
-    # Evidence | Assert: assert body == tx
-    # Evidence | Assert: assert int(response["cycles"], 16) == cycles
-    # Evidence | Assert: assert int(pool_transactions(client)[tx_hash]["cycles"], 16) == cycles
-    # Evidence | Limit: Request proof comes from sender protocol log, not custom packet capture. Reannouncement uses another peer; fast control uses original sender.
-    # Evidence | Limit: Second refusal log precedes some cleanup; the new request already proves release following the first refusal.
-    # Evidence | Limit: Static coverage only; this readability review does not establish current real-node per-Case outcomes.
-    # TEST-EVIDENCE-END: VT2-02
     def test_remote_timeout_keeps_peer_connected_for_next_valid_transaction(self):
         """
         1. 发送慢交易，让 1ms 接收节点触发网络验证超时。
@@ -189,6 +130,8 @@ class TestRemoteTimeBudgetPeer(CkbTest):
         source = self.source
         receiver = self.receiver
         other = self.other
+
+        # 1. 发送慢交易，检查低预算接收方的网络验证超时结果。
         slow = workload.build_transaction(source, slow=True)
         source.connected(receiver)
         workload.wait_for(
@@ -201,6 +144,8 @@ class TestRemoteTimeBudgetPeer(CkbTest):
         tx_hash = source.getClient().send_transaction(slow)
         workload.assert_pool_transaction(source, tx_hash, slow, workload.BUDGET_CYCLES)
         workload.assert_remote_budget_refusal(receiver, tx_hash)
+
+        # 2. 另一节点重发相同交易，检查新增请求和第二次验证超时。
         refusals = len(workload.remote_refusals(receiver, tx_hash))
         requests_before = len(workload.transaction_requests(other, tx_hash))
         assert refusals >= 1
@@ -220,7 +165,7 @@ class TestRemoteTimeBudgetPeer(CkbTest):
             45,
         )
         workload.assert_remote_budget_refusal(receiver, tx_hash, refusals + 1)
-        # This new hash uses an independent input and the original peer.
+        # 3. 原节点用独立输入发送快交易，检查入池成功、连接保留且没有封禁。
         fast = workload.build_transaction(source, cell=1)
         fast_hash = source.getClient().send_transaction(fast)
         workload.assert_pool_transaction(

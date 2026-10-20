@@ -306,34 +306,6 @@ class TestVmVerificationPaths(CkbTest):
     """VM-version/syscall fixtures through RPC, real relay and cold full blocks."""
 
     # TEST-MAP: VT2-24
-    # TEST-EVIDENCE-BEGIN: VT2-24
-    # Evidence | Case: VT2-24 (covered)
-    # Evidence | Setup: Each of the nine requested script inputs is checked against its fixed SHA-256 as script_path is called during setup; there is no suite-wide manifest preflight; fixed cycle JSON read without regeneration. Seven VM/version and applicable exec/spawn fixtures use independent genesis cells and cap12000. Fresh class-owned nodes are explicitly configured and started in TestVmVerificationPaths.setup_class; each class has one independent scenario.
-    # Evidence | Trigger: Each fixture: source RPC dry-run, real relay to second node, mining, then full-block submit to isolated third node whose target status is unknown.
-    # Evidence | Observe: RPC and verbose pool cycles match fixed baseline; cold node body/block hash committed matches source; full-block helper requires canonical tip convergence.
-    # Evidence | Assert: assert int(preview["cycles"], 16) == expected[label], (label, preview)
-    # Evidence | Assert: assert cold.get_connected_count() == 0
-    # Evidence | Assert: assert (
-    # Evidence |                 cold.getClient().get_transaction(tx_hash)["tx_status"]["status"]
-    # Evidence |                 == "unknown"
-    # Evidence |             )
-    # Evidence | Assert: assert result["tx_status"]["status"] == "committed", label
-    # Evidence | Assert: assert result["transaction"] == committed["transaction"], label
-    # Evidence | Assert: assert (
-    # Evidence |                 result["tx_status"]["block_hash"]
-    # Evidence |                 == committed["tx_status"]["block_hash"]
-    # Evidence |             ), label
-    # Evidence | Assert: assert response["tx_status"]["status"] in ("pending", "proposed"), response
-    # Evidence | Assert: assert body.pop("hash") == tx_hash
-    # Evidence | Assert: assert body == tx
-    # Evidence | Assert: assert int(response["cycles"], 16) == cycles
-    # Evidence | Assert: assert int(pool_transactions(client)[tx_hash]["cycles"], 16) == cycles
-    # Evidence | Assert: assert receiver.submit_block("0x0", block) == expected_hash
-    # Evidence | Assert: raise AssertionError(f"block receiver did not reach {expected_tip}")
-    # Evidence | Limit: Seven fixture labels are an in-method loop, not seven independent pytest parameter selectors.
-    # Evidence | Limit: Baseline JSON fixes values/hashes but lacks original pre-change commit/binary/measurement receipt; historical provenance is unverified.
-    # Evidence | Limit: Static coverage only; this readability review does not establish current real-node per-Case outcomes.
-    # TEST-EVIDENCE-END: VT2-24
     def test_vm_cycles_match_across_rpc_relay_and_block_verification(self):
         """
         1. 遍历固定的 VM0/1/2、exec 和 spawn 七组样本。
@@ -343,6 +315,7 @@ class TestVmVerificationPaths(CkbTest):
         import json
         from test_cases.network_verification.runtime import ROOT, script_path
 
+        # 1. 准备七组固定样本和独立 cycles 基线，逐组构造交易及脚本依赖。
         fixtures = [
             ("vm0", "data", []),
             ("vm1", "data1", []),
@@ -401,18 +374,21 @@ class TestVmVerificationPaths(CkbTest):
                 )
                 if position == 0:
                     code_hash = workload.script_hash(path)
-            # The syscall fixtures address callee deps by index, so keep
-            # caller/callee order and append the input-lock dependency last.
+            # 系统调用样本按索引访问被调用脚本，保留依赖顺序并将输入锁依赖放在最后。
             tx["cell_deps"] = deps + tx["cell_deps"]
             tx["outputs"][0]["type"] = {
                 "code_hash": code_hash,
                 "hash_type": hash_type,
                 "args": "0x",
             }
+
+            # 2. 每组样本分别检查 dry-run 和真实网络入池的 cycles 等于固定基线。
             preview = miner.getClient().test_tx_pool_accept(tx, "passthrough")
             assert int(preview["cycles"], 16) == expected[label], (label, preview)
             tx_hash = miner.getClient().send_transaction(tx)
             workload.assert_pool_transaction(receiver, tx_hash, tx, expected[label])
+
+            # 3. 第三个节点不接收交易转发，只验证完整区块并核对最终交易体和区块哈希。
             assert cold.get_connected_count() == 0
             assert (
                 cold.getClient().get_transaction(tx_hash)["tx_status"]["status"]

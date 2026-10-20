@@ -35,34 +35,15 @@ class Test4111(CkbTest):
         cls.node.clean()
 
     # TEST-MAP: VT2-53
-    # TEST-EVIDENCE-BEGIN: VT2-53
-    # Evidence | Case: VT2-53 (covered)
-    # Evidence | Setup: Confirmed99CKB ordinary input and signed100CKB single output; valid98CKB control reuses same input with correct new signature.
-    # Evidence | Trigger: Both RPC endpoints receive invalid negative-fee candidate, then positive-fee control is previewed/submitted.
-    # Evidence | Observe: Actual99/100 capacities, -1108 Malformed/Overflow, unchanged pool; legal98CKB control admitted with matching positive cycles.
-    # Evidence | Assert: assert (
-    # Evidence |             int(
-    # Evidence |                 client.get_transaction(funding)["transaction"]["outputs"][0][
-    # Evidence |                     "capacity"
-    # Evidence |                 ],
-    # Evidence |                 16,
-    # Evidence |             )
-    # Evidence |             == 99 * 100_000_000
-    # Evidence |         )
-    # Evidence | Assert: assert int(invalid["outputs"][0]["capacity"], 16) == 100 * 100_000_000
-    # Evidence | Assert: assert error["code"] == -1108, error
-    # Evidence | Assert: assert "Malformed" in error["data"] and "Overflow" in error["data"], error
-    # Evidence | Assert: assert client.get_raw_tx_pool(False) == before
-    # Evidence | Assert: assert int(valid["outputs"][0]["capacity"], 16) == 98 * 100_000_000
-    # Evidence | Assert: assert result["tx_status"]["status"] in ("pending", "proposed")
-    # Evidence | Assert: assert int(result["cycles"], 16) == int(preview["cycles"], 16) > 0
-    # Evidence | Assert: assert tx_hash in client.get_raw_tx_pool(False)["pending"]
-    # Evidence | Limit: Intended public fee precheck, not later contextual OutputsSumOverflow.
-    # Evidence | Limit: Static coverage only; this readability review does not establish current real-node per-Case outcomes.
-    # TEST-EVIDENCE-END: VT2-53
     def test_output_capacity_exceeding_inputs_is_rejected(self):
+        """
+        1. 创建并确认容量为 99 CKB 的输入。
+        2. 构造输出 100 CKB 的超额交易，检查两个 RPC 都拒绝且交易池不变。
+        3. 用相同输入构造输出 98 CKB 的合法交易，检查预检与入池 cycles 一致。
+        """
         import requests
 
+        # 1. 准备已确认的 99 CKB 输入，独立核对实际输出容量。
         client = self.node.getClient()
         key = self.Config.ACCOUNT_PRIVATE_2
         address = self.Ckb_cli.util_key_info_by_private_key(key)["address"]["testnet"]
@@ -79,6 +60,8 @@ class Test4111(CkbTest):
             )
             == 99 * 100_000_000
         )
+
+        # 2. 输出容量超过输入，检查预检和提交均返回 Malformed/Overflow。
         invalid = self.Tx.build_send_transfer_self_tx_with_input(
             [funding], ["0x0"], key, fee=-100_000_000, api_url=client.url
         )
@@ -100,7 +83,7 @@ class Test4111(CkbTest):
             assert error["code"] == -1108, error
             assert "Malformed" in error["data"] and "Overflow" in error["data"], error
             assert client.get_raw_tx_pool(False) == before
-        # Same confirmed input, ordinary positive fee and a valid signature.
+        # 3. 使用同一输入、正常正手续费和有效签名，核对合法交易的 cycles 和入池状态。
         valid = self.Tx.build_send_transfer_self_tx_with_input(
             [funding], ["0x0"], key, fee=100_000_000, api_url=client.url
         )
