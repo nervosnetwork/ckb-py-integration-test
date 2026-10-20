@@ -1,6 +1,6 @@
 # Network verification — Python regression
 
-These 17 pytest methods cover 19 mapped integration test points using ordinary
+These 18 pytest methods cover 20 mapped integration test points using ordinary
 CKB nodes, RPC and node-to-node relay. Existing DAO, Type ID, capacity, VM and
 sync methods stay in their original files rather than being copied.
 
@@ -14,9 +14,11 @@ CLI helpers continue to use the project's existing `source/ckb-cli` path.
 Requirements: the project's Python dependencies, Python 3.10–3.12, Linux/macOS
 and `lsof`. All fixed contract binaries are included in `source/contract` and
 loaded directly from that directory; no script-path environment variable is used.
-The binaries match CKB's `script/testdata` inputs. Fixed ELF hashes and expected
-VM cycles remain in `fixtures/vm-cycle-baseline.json`; tests never regenerate
-expectations.
+The original VM/syscall binaries match CKB's `script/testdata` inputs. Fixed ELF
+hashes and expected VM cycles remain in `fixtures/vm-cycle-baseline.json`; tests
+never regenerate expectations. The additional `cpu_budget_stress_1b` fixture is
+a finite single-VM stress loop with its assembly source and linker script beside
+the ELF; its hash is pinned, without claiming an independent cycles baseline.
 
 Run serially with the framework's usual checkout name and shell-safe paths;
 existing CLI helpers share temporary key paths. No binary staging or additional
@@ -55,10 +57,52 @@ Use native `--collect-only`, `-k`, or node IDs for inspection and selection.
 Makefile case-group loop includes this test directory. `runtime.py` only checks
 fixed script inputs; it neither selects binaries nor controls test execution.
 
+### Long-running VM interruption (VT2-58)
+
+```sh
+python3 -m pytest test_cases/network_verification/test_budget_cpu_stop.py
+```
+
+This roughly two-minute test uses three fresh nodes and the bundled finite
+billion-iteration syscall loop. Local submission and the 180000ms network
+control must both consume at least 16 seconds of process CPU and finish. The
+8000ms node must emit BEGIN and a budget refusal, but no END; its observed
+process CPU between these events must be 7.7–8.6 seconds. After refusal, another
+15 seconds of observation must return to the idle CPU allowance; a fast relay
+must still succeed. All nodes are stopped and cleaned normally.
+
+Only this test's isolated dev chain raises block and pool verification cycles to
+`1_000_000_000_000`, so the cycle ceiling does not preempt the time budget. It
+is not a mainnet-consensus workload. Run on an otherwise quiet machine: the
+five-second idle baseline must use less than 5% of one CPU core. The post-refusal
+CPU allowance is `max(0.25s, idle_rate * observation_seconds + 0.20s)`. A workload
+that completes too quickly fails explicitly rather than falsely proving interruption.
+
+Linux uses `/proc/<pid>/stat`; macOS converts `proc_pid_rusage` Mach ticks with
+`mach_timebase_info`. No new dependency or environment variable is required.
+Counters are tested against Python's process CPU clock. Results measure whole
+process CPU, including background work, not exact execution-thread timing.
+Unsupported operating systems skip this CPU-specific case before starting nodes.
+
+The checked-in ELF is used directly, without a test-time build. To rebuild the
+fixture manually with LLVM's RISC-V assembler and `ld.lld`:
+
+```sh
+clang --target=riscv64-unknown-elf -march=rv64imc -mabi=lp64 -nostdlib \
+  -fuse-ld=lld -Wl,-T,source/contract/cpu_budget_stress_1b.ld \
+  -Wl,--no-relax -Wl,-z,max-page-size=4096 \
+  source/contract/cpu_budget_stress_1b.S -o source/contract/cpu_budget_stress_1b
+```
+
+Toolchain changes can alter ELF bytes; check the pinned input hash rather than
+regenerating it automatically during a test run.
+
 ## What is asserted
 
 - Hash-specific real-node CPU-budget refusal, fresh transaction request barriers,
   absent pool/rejected state, connected peers, no bans and subsequent success.
+- Mid-execution interruption of a single long-running VM, high-budget relay
+  completion, and process CPU returning to idle after refusal (VT2-58).
 - Local/dry-run admission, persistence, cold reorg recovery and re-mining;
   RBF parent/child preservation and rejected-transaction subscription controls.
 - Production/test configuration boundaries; DAO, Type ID, since and capacity
@@ -67,7 +111,7 @@ fixed script inputs; it neither selects binaries nor controls test execution.
 - Mining retains uncle headers **and proposals**. Dropping template uncles can
   strand a recovered transaction in pending by omitting its proposal from the chain.
 
-See [the unchanged case contracts](../../reviews/network-verification-budget.md).
+See [the case contracts](../../reviews/network-verification-budget.md).
 VT2-03/04/05/30/55/57 (controlled proposal/orphan/malformed-relay packets) remain
 unimplemented. Ordinary relay or RPC notification is not credited as those paths.
 Mappings, semantic review and actual execution results are separate evidence.

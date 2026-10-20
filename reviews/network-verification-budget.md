@@ -1,6 +1,6 @@
 # Network verification budget：Python 回归测试
 
-25 个已确认的集成测试点；本次交付 17 个 pytest 方法，映射其中 19 点。VT2-03/04/05/30/55/57 尚未实现，保留为缺口，不计通过。
+26 个已确认的集成测试点；本次交付 18 个 pytest 方法，映射其中 20 点。VT2-03/04/05/30/55/57 尚未实现，保留为缺口，不计通过。
 
 运行说明见 [suite README](../test_cases/network_verification/README.md)。用例预期不随被测版本自动改变；映射勾选不等于执行通过。
 
@@ -8,6 +8,8 @@
 
 网络来源验证增加机器本地 CPU 预算：relay、proposal response、网络 orphan 都应受限；本地提交、dry-run、本地恢复和区块共识验证不受这一网络 cap。
 超限表示验证尚未完成，不等于交易无效，因此应可重试、不误 ban、不污染池状态。计量是线程 CPU 而非墙钟，本集成文档只验证外部结果，不测纳秒级预算边界。
+
+VT2-58 将已实测的单 VM 长循环补充为回归：用操作系统进程累计 CPU、脚本起止日志和真实 relay 对照检查中途停止；进程 CPU 包含后台工作，不宣称精确读取内部线程预算或证明整个节点零 CPU。
 
 本次移出测试点：直接调用 runner/Worker、注入 CPU 收据/时钟故障、Suspend/Resume/Stop 竞态、join/panic/资源析构、校准公式和采样、内存序、内部缓存计数、Rust API compile-fail、wasm/build/clippy 文档检查。这些需要单元/组件/构建测试，不改名包装成集成测试。
 
@@ -107,6 +109,8 @@ Testing: required
     - VT2-01 [primary] -> SPEC-01, SPEC-05：冷缓存接收节点通过真实 relay 收到声明 cycles 正确的快速合法交易 → 交易进入 pending/proposed，交易体和 cycles 正确；发送 peer 保持连接
   - relay 超限与重试
     - VT2-02 [primary] -> SPEC-01, SPEC-07：低 cap 节点收到合法慢交易；处理结束后再次宣告同一 hash，并由同一 peer 发送快速合法交易 → 慢交易未入池、状态为 unknown、没有新增 ban；节点再次请求同一 hash，快速交易正常入池
+  - 单 VM 中途停止
+    - VT2-58 [primary] -> SPEC-01, SPEC-07：单 VM 长循环先本地完整执行，再经真实 relay 发送给 8000ms/180000ms 冷节点 → 低预算在中途拒绝且后续 15 秒 CPU 回到空闲；高预算完整入池；低预算仍接受快交易
   - proposal response
     - VT2-03 [primary] -> SPEC-01, SPEC-07：节点先发出 GetBlockProposal，再收到包含合法慢交易的真实 BlockProposal 响应；接收节点为低 cap、冷缓存 → 慢交易未入池且没有公开 rejected 记录；结束后再次宣告同 hash 可收到请求，连接仍可用
   - orphan
@@ -195,6 +199,7 @@ Testing: required
 | `VT2-54` | - [x] DAO withdrawing 输入的交易其余条件有效，仅缺少对应 withdrawing header_dep；通过 RPC 校验/提交，再补齐依赖作对照 | 在 DAO 手续费预检查返回 RPC −1108 / Malformed，原因包含 InvalidOutPoint，且不入池；补齐且成熟后的合法对照通过 | 新验证入口跳过 DAO fee 上下文验证 | P1 |
 | `VT2-55` | - [ ] 充足预算下通过真实 relay 发送确定非零退出的快速脚本交易，避开特殊可延后错误；启用 recent-reject | 交易未入池，公开拒绝保留 ValidationFailure 及脚本定位；发送 peer 被 ban，拒绝记录可查询 | 把真正脚本失败统一改成内部可重试结果 | P1 |
 | `VT2-57` | - [ ] 独立节点取得单脚本组合法交易实际 cycles=C；冷接收节点在充分 CPU 预算下收到声明 C−1 的真实 relay，启用 recent-reject | 交易不入池；公开拒绝为 Verification，原因含 ExceededMaximumCycles 及正确脚本定位；peer 被 ban，拒绝记录可查询 | 把共识 cycles 耗尽误判成声明过高或 CPU 可重试超限 | P1 |
+| `VT2-58` | - [x] 单 VM 长循环先本地完整执行，再经真实 relay 发送给 8000ms/180000ms 冷节点，采样进程 CPU 并在低预算拒绝后观察 15 秒 | 本地及高预算完整执行至少 16 秒 CPU、交易体/cycles 一致；低预算约 8 秒中途拒绝且无结束标记，之后 CPU 回到空闲、慢交易未入池，快交易仍成功 | 只返回超时而 VM 后台继续占用 CPU，或仅在脚本组边界检查预算 | P0 |
 <!-- TEST-CASES-END -->
 
 ## 6. 关键场景实施说明
@@ -205,6 +210,13 @@ Testing: required
 - **VT2-03**：先发送包含 proposal ID 的 compact block，捕获节点 `GetBlockProposal`，再回真实 `BlockProposal`；RPC `notify_transaction` 不替代协议入口证明。proposal 窗口、区块有效性及链高度独立满足。
 - **VT2-04/05**：先 withholding parent，实际观察 orphan 增加；再通过正常本地提交补父。分支由**真实声明 cycles 与配置阈值的大小关系**决定；排队点记录已有 enqueue 日志/协议与池完成序列，不强求瞬时队列长度一定被轮询捕获。较低阈值应仍允许准备交易、补父及大 cycles worker 工作；不通过谎报 cycles 选路。
 - 所有超限点先用有效交易和低/高预算对照排除 cycles、手续费、依赖、容量等其他失败；普通真实无效交易另用 VT2-30/55/57 验证。
+
+### 单 VM CPU 停止
+
+- **VT2-58**：复用已实测的有限十亿次 `current_cycles` 循环，仅输出 BEGIN/END 两条脚本日志；慢 type 脚本只有一个组。固定 ELF 存放于 `source/contract`，不设置环境变量或在测试时编译合约。
+- 三节点共用独立 dev 链；仅本类把区块及池验证 cycles 上限提高到 `1_000_000_000_000`，排除先耗尽 cycles 的混淆。本地与 180000ms 网络对照须完整执行且至少消耗 16 秒进程 CPU；过快机器或过慢超时均明确失败，不以跳过代替成功。
+- 先测 5 秒空闲 CPU，空闲占单核须低于 5%。以 50ms 间隔采样日志对应的进程 CPU；8000ms 节点的 BEGIN→预算拒绝 CPU 增量须落在 7.7–8.6 秒，允许进程后台工作和采样误差。拒绝后 15 秒 CPU 增量须小于 `max(0.25 秒, 空闲 CPU 速率 × 观测时长 + 0.20 秒)`，且直到高预算对照完成仍无 END 标记；队列清空、慢交易 unknown、同 peer 快交易成功且无 ban。
+- Linux 读取 `/proc/<pid>/stat` 的 user/system ticks；macOS 读取 `proc_pid_rusage` 并用 `mach_timebase_info` 转换 Mach ticks。计数读取失败使测试失败；不将 `%CPU` 衰减值、固定 sleep 或 RPC 超时当成中断证据。测试节点仍按项目 `start/stop/clean` 生命周期清理。
 
 ### 本地、重启、重组与验块
 

@@ -18,7 +18,9 @@
     "spawn_callee_current_cycles": "d36f4e1fa0fcb7af3053651514505afd6f88b09e30dc848b311f3c12214e31b1",
     "spawn_caller_exec": "e35f995a293335b4a2e15500903bc5c6b74c8701ccd06a6748fca1cc2573f52f",
     "spawn_callee_exec_caller": "929734d7024efa7ca01e83f18853ea52bfa397131c233c4f10c5160d140ee064",
-    "spawn_callee_exec_callee": "bf1e26f596fd64b253957fc98a85f43a2b4643b4b5976abe067e9231baa74510"
+    "spawn_callee_exec_callee": "bf1e26f596fd64b253957fc98a85f43a2b4643b4b5976abe067e9231baa74510",
+    "cpu_budget_stress_1b": "dce46a6c0020f3fe0d26f0e9e17cb5a8fba280933d23201559a98a189046ef87"
   },
-  "reference": "Fixed pre-change measurements for these exact scripts; never learned from the node under test."
+  "reference": "Fixed pre-change measurements for the original VM/syscall scripts; never learned from the node under test.",
+  "cpu_stress_reference": "Only the separately added finite CPU stress ELF is hash-pinned here. Its local and relay cycles are compared for consistency, not claimed as an independent pre-change cycles baseline."
 }
