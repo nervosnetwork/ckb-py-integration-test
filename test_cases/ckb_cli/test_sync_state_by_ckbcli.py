@@ -1,6 +1,9 @@
-import pytest
+from pathlib import Path
+
 
 from framework.basic import CkbTest
+import toml
+from test_cases.network_verification import workload
 
 
 class TestCkbCliRpc117(CkbTest):
@@ -67,3 +70,194 @@ class TestCkbCliRpc117(CkbTest):
         self.Ckb_cli.version()
         sync_state = self.Ckb_cli.sync_state(api_url=self.node.getClient().url)
         assert "orphan_blocks_size" not in sync_state
+
+
+class TestSyncProgress(CkbTest):
+    @classmethod
+    def setup_class(cls):
+        # 每个测试类使用独立节点；失败时也执行清理。
+        cls.nodes = []
+        cls.started_nodes = []
+        try:
+            # 无效区块来源：触发接收节点的验块失败。预算单位为毫秒，不是 VM cycles。
+            rpc_port, p2p_port, tcp_port = workload.unused_ports(3)
+            cls.bad = cls.CkbNode.init_dev_by_port(
+                cls.CkbNodeConfigPath.CURRENT_TEST,
+                f"network_verification/TestSyncProgress/bad_{rpc_port}",
+                rpc_port,
+                p2p_port,
+            )
+            cls.nodes.append(cls.bad)
+            cls.bad.prepare()
+            config_path = Path(cls.bad.ckb_toml_path)
+            config = toml.loads(config_path.read_text())
+            config["tx_pool"].update(
+                max_tx_verify_time_ms=12_000,
+                max_tx_verify_cycles=1_000_000_000,
+                keep_rejected_tx_hashes_days=1,
+                keep_rejected_tx_hashes_count=1000,
+            )
+            config["rpc"]["tcp_listen_address"] = f"127.0.0.1:{tcp_port}"
+            if "Subscription" not in config["rpc"]["modules"]:
+                config["rpc"]["modules"].append("Subscription")
+            config["logger"]["filter"] = "info,ckb_tx_pool=debug,ckb_relay=trace"
+            config["network"]["connect_outbound_interval_secs"] = 0
+            config_path.write_text(toml.dumps(config))
+            # 创世块加入固定脚本和 8 个 6500 CKB 测试输入。
+            workload.add_genesis_test_cells(cls.bad)
+            cls.bad.start()
+            cls.started_nodes.append(cls.bad)
+            assert cls.bad.getClient().tx_pool_info()["tip_number"] == "0x0"
+
+            # 接收节点：12 秒上限，正常执行网络验证。预算单位为毫秒，不是 VM cycles。
+            rpc_port, p2p_port, tcp_port = workload.unused_ports(3)
+            cls.receiver = cls.CkbNode.init_dev_by_port(
+                cls.CkbNodeConfigPath.CURRENT_TEST,
+                f"network_verification/TestSyncProgress/receiver_{rpc_port}",
+                rpc_port,
+                p2p_port,
+            )
+            cls.nodes.append(cls.receiver)
+            cls.receiver.prepare()
+            config_path = Path(cls.receiver.ckb_toml_path)
+            config = toml.loads(config_path.read_text())
+            config["tx_pool"].update(
+                max_tx_verify_time_ms=12_000,
+                max_tx_verify_cycles=1_000_000_000,
+                keep_rejected_tx_hashes_days=1,
+                keep_rejected_tx_hashes_count=1000,
+            )
+            config["rpc"]["tcp_listen_address"] = f"127.0.0.1:{tcp_port}"
+            if "Subscription" not in config["rpc"]["modules"]:
+                config["rpc"]["modules"].append("Subscription")
+            config["logger"]["filter"] = "info,ckb_tx_pool=debug,ckb_relay=trace"
+            config["network"]["connect_outbound_interval_secs"] = 0
+            config_path.write_text(toml.dumps(config))
+            # 创世块加入固定脚本和 8 个 6500 CKB 测试输入。
+            workload.add_genesis_test_cells(cls.receiver)
+            cls.receiver.start()
+            cls.started_nodes.append(cls.receiver)
+            assert cls.receiver.getClient().tx_pool_info()["tip_number"] == "0x0"
+
+            # 健康来源：随后提供有效区块，验证同步继续。预算单位为毫秒，不是 VM cycles。
+            rpc_port, p2p_port, tcp_port = workload.unused_ports(3)
+            cls.healthy = cls.CkbNode.init_dev_by_port(
+                cls.CkbNodeConfigPath.CURRENT_TEST,
+                f"network_verification/TestSyncProgress/healthy_{rpc_port}",
+                rpc_port,
+                p2p_port,
+            )
+            cls.nodes.append(cls.healthy)
+            cls.healthy.prepare()
+            config_path = Path(cls.healthy.ckb_toml_path)
+            config = toml.loads(config_path.read_text())
+            config["tx_pool"].update(
+                max_tx_verify_time_ms=12_000,
+                max_tx_verify_cycles=1_000_000_000,
+                keep_rejected_tx_hashes_days=1,
+                keep_rejected_tx_hashes_count=1000,
+            )
+            config["rpc"]["tcp_listen_address"] = f"127.0.0.1:{tcp_port}"
+            if "Subscription" not in config["rpc"]["modules"]:
+                config["rpc"]["modules"].append("Subscription")
+            config["logger"]["filter"] = "info,ckb_tx_pool=debug,ckb_relay=trace"
+            config["network"]["connect_outbound_interval_secs"] = 0
+            config_path.write_text(toml.dumps(config))
+            # 创世块加入固定脚本和 8 个 6500 CKB 测试输入。
+            workload.add_genesis_test_cells(cls.healthy)
+            cls.healthy.start()
+            cls.started_nodes.append(cls.healthy)
+            assert cls.healthy.getClient().tx_pool_info()["tip_number"] == "0x0"
+
+            # 显式建立共同的 30 块链；此处只传区块，不建立 P2P 连接。
+            cls.Miner.make_tip_height_number(cls.bad, 30)
+            workload.sync_blocks(cls.bad, cls.receiver, 1, 30)
+            workload.sync_blocks(cls.bad, cls.healthy, 1, 30)
+        except Exception:
+            cls.teardown_class()
+            raise
+
+    @classmethod
+    def teardown_class(cls):
+        for node in reversed(cls.started_nodes):
+            node.stop()
+        for node in cls.nodes:
+            workload.save_node_logs(node)
+            node.clean()
+
+    # TEST-MAP: VT2-39
+    def test_invalid_block_then_valid_sync_preserves_progress_floor(self):
+        """
+        1. 坏来源发送会进入区块体验证的无效区块，确认实际失败证据。
+        2. 独立健康来源继续提供有效区块，等待接收节点追上有效链。
+        3. 在稳定链高度检查同步状态，避免把瞬时跨 RPC 状态当成断言。
+        """
+        import copy
+        import time
+
+        bad = self.bad
+        receiver = self.receiver
+        healthy = self.healthy
+        bad_rpc, client = bad.getClient(), receiver.getClient()
+
+        # 1. 仅破坏区块的 DAO 字段，转发后核对封禁和对应区块哈希的 InvalidDAO 日志。
+        common = bad_rpc.get_tip_header()["hash"]
+        self.Miner.make_tip_height_number(bad, 31)
+        invalid = copy.deepcopy(bad_rpc.get_block_by_number("0x1f"))
+        invalid["header"].pop("hash")
+        for transaction in invalid["transactions"]:
+            transaction.pop("hash", None)
+        # 保留其余头和体的根哈希，让错误在完整验块阶段暴露，而非同步区块头预检。
+        invalid["header"]["dao"] = "0x" + "00" * 32
+        bad_rpc.truncate(common)
+        invalid_hash = bad_rpc.call("process_block_without_verify", [invalid, False])
+        assert invalid_hash and bad_rpc.get_tip_header()["hash"] == invalid_hash
+        # 封禁可能早于连接轮询；用封禁和精确 InvalidDAO 区块哈希确认实际交付。
+        bad.connected(receiver)
+        workload.wait_for(
+            lambda: client.get_banned_addresses(), "invalid body source banned", 45
+        )
+        assert client.get_tip_header()["hash"] == common
+        assert client.get_block_by_number("0x1f") is None
+
+        log = (Path(receiver.ckb_dir) / "node.log").read_text(errors="replace")
+        assert any(
+            invalid_hash in line and "InvalidDAO" in line for line in log.splitlines()
+        )
+        # 2. 断开坏来源并清除共享回环 IP 的封禁，再让独立健康来源继续同步。
+        client.remove_node(bad.get_peer_id())
+        for ban in client.get_banned_addresses():
+            client.set_ban(ban["address"], "delete", None, None, None)
+        self.Miner.make_tip_height_number(healthy, 32)
+        expected_tip = healthy.getClient().get_tip_header()["hash"]
+        healthy.connected(receiver)
+        workload.wait_for(
+            lambda: any(
+                peer["node_id"] == healthy.get_peer_id()
+                for peer in receiver.getClient().get_peers()
+            ),
+            "expected peer connection",
+        )
+        workload.wait_for(
+            lambda: client.get_tip_header()["hash"] == expected_tip
+            and client.tx_pool_info()["tip_hash"] == expected_tip,
+            "valid tip/pool convergence",
+            45,
+        )
+        assert expected_tip != invalid_hash
+
+        # 3. 在有效链尖端重复检查同步进度下限及未验证区块头的一致性。
+        for _ in range(3):
+            tip = client.get_tip_header()
+            state = client.call("sync_state", [])
+            assert tip["hash"] == expected_tip
+            assert int(state["unverified_tip_number"], 16) >= int(
+                tip["number"], 16
+            ), state
+            header = client.call("get_header", [state["unverified_tip_hash"]])
+            assert (
+                header is not None
+                and header["number"] == state["unverified_tip_number"]
+            ), (state, header)
+            time.sleep(0.1)
+        self.did_pass = True

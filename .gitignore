@@ -8,3 +8,5 @@ __pycache__
 pid.txt
 .idea
 venv
+# Local network-budget regression outputs
+/report/network-verification/

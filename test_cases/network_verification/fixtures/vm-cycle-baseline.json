@@ -1,0 +1,24 @@
+{
+  "values": {
+    "vm0": 1074,
+    "vm1": 1076,
+    "vm2": 1076,
+    "exec-vm1": 1737,
+    "exec-vm2": 76735,
+    "spawn-vm2": 479132,
+    "spawn-exec-vm2": 180636
+  },
+  "budget_workload_cycles": 135598681,
+  "script_sha256": {
+    "always_success": "447282f65719c67044506f25103fc11325a1776d67cc06784b81f7c665c8b851",
+    "current_cycles": "1765d260c9af7d2ca5806d54ae8d967d88c54eb46388a67d4d0804377b785b25",
+    "exec_caller_from_cell_data": "3d3ced233a6a2b8fd3fb108e2fc2dd65e26aa36dafadd90f2e9aa47ee5550d17",
+    "exec_callee": "b1282323a81574a4a5f9dc439b0b41f05f1e12add301ed8b25201cc1cdb8c137",
+    "spawn_caller_current_cycles": "d2eab560b869d9b142fb2342027c4dd16c760ea7928058b006d165303a9442d6",
+    "spawn_callee_current_cycles": "d36f4e1fa0fcb7af3053651514505afd6f88b09e30dc848b311f3c12214e31b1",
+    "spawn_caller_exec": "e35f995a293335b4a2e15500903bc5c6b74c8701ccd06a6748fca1cc2573f52f",
+    "spawn_callee_exec_caller": "929734d7024efa7ca01e83f18853ea52bfa397131c233c4f10c5160d140ee064",
+    "spawn_callee_exec_callee": "bf1e26f596fd64b253957fc98a85f43a2b4643b4b5976abe067e9231baa74510"
+  },
+  "reference": "Fixed pre-change measurements for these exact scripts; never learned from the node under test."
+}
