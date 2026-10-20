@@ -48,7 +48,8 @@ test_cases := \
 	test_cases/poc \
 	test_cases/v208 \
 	test_cases/v209 \
-	test_cases/v210
+	test_cases/v210 \
+	test_cases/network_verification
 
 
 

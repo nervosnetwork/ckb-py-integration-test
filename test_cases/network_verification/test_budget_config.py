@@ -5,6 +5,7 @@ import subprocess
 import time
 from pathlib import Path
 
+import pytest
 import toml
 
 from framework.basic import CkbTest
@@ -13,6 +14,7 @@ from test_cases.network_verification import workload
 
 class TestTxPoolConfigCompatibility(CkbTest):
 
+    @pytest.mark.skip("skip for build feature:test")
     # TEST-MAP: VT2-32
     def test_production_rejects_test_only_budget_fields(self):
         """
