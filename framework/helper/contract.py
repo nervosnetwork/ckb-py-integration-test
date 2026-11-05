@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 from framework.helper.ckb_cli import *
 from framework.test_node import CkbNode
 from framework.rpc import RPCClient
+from framework.helper.signed_transaction import build_tx_info as _build_signed_tx_info
 
 
 class CkbContract(ABC):
@@ -273,6 +274,7 @@ def build_invoke_ckb_contract(
     data="0x",
     fee=1000,
     api_url="http://127.0.0.1:8114",
+    min_input_count=1,
 ):
     """
 
@@ -285,10 +287,13 @@ def build_invoke_ckb_contract(
         data:
         fee:
         api_url:
+        min_input_count: Minimum number of same-account inputs to select.
 
     Returns:
 
     """
+    if min_input_count < 1:
+        raise ValueError("min_input_count must be positive")
     if hash_type == "type":
         contract_code_hash = get_ckb_contract_codehash(
             contract_out_point_tx_hash,
@@ -312,21 +317,29 @@ def build_invoke_ckb_contract(
     input_cell_out_points = []
     input_cell_cap = 0
     for i in range(len(account_live_cells["live_cells"])):
+        live_cell = account_live_cells["live_cells"][i]
+        if (
+            live_cell["tx_hash"] == contract_out_point_tx_hash
+            and live_cell["output_index"] == contract_out_point_tx_index
+        ):
+            continue
         input_cell_out_point = {
-            "tx_hash": account_live_cells["live_cells"][i]["tx_hash"],
-            "index": account_live_cells["live_cells"][i]["output_index"],
+            "tx_hash": live_cell["tx_hash"],
+            "index": live_cell["output_index"],
         }
         input_cell_cap += (
-            float(
-                account_live_cells["live_cells"][i]["capacity"]
-                .replace("(CKB)", "")
-                .strip()
-            )
-            * 100000000
+            float(live_cell["capacity"].replace("(CKB)", "").strip()) * 100000000
         )
         input_cell_out_points.append(input_cell_out_point)
-        if input_cell_cap > 10000000000:
+        if (
+            input_cell_cap > 10000000000
+            and len(input_cell_out_points) >= min_input_count
+        ):
             break
+
+    assert (
+        len(input_cell_out_points) >= min_input_count
+    ), f"need {min_input_count} live inputs, found {len(input_cell_out_points)}"
 
     # get output_cells.cap = input_cell.cap - fee
     #  "capacity": "21685.0 (CKB)",
@@ -388,14 +401,4 @@ def build_invoke_ckb_contract(
 
 
 def build_tx_info(tmp_tx_file):
-    with open(tmp_tx_file, "r") as file:
-        tx_info_str = file.read()
-    tx = json.loads(tx_info_str)
-    sign_keys = list(tx["signatures"].keys())[0]
-    witness = (
-        "0x5500000010000000550000005500000041000000"
-        + tx["signatures"][sign_keys][0][2:]
-    )
-    tx_msg = tx["transaction"]
-    tx_msg["witnesses"] = [witness]
-    return tx_msg
+    return _build_signed_tx_info(tmp_tx_file)

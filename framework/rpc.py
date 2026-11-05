@@ -257,29 +257,43 @@ class RPCClient:
     def test_tx_pool_accept(self, tx, outputs_validator):
         return self.call("test_tx_pool_accept", [tx, outputs_validator])
 
-    def call(self, method, params, try_count=15):
+    def call(self, method, params, try_count=15, *, timeout=None, verbose=True):
+        """Call an RPC with optional requests timeout and request/response logs.
+
+        timeout applies to each attempt, not the whole retry loop. Use
+        try_count=1 when the caller owns the deadline and needs fail-fast errors.
+        Defaults retain the existing logging and connection retry behavior.
+        """
 
         headers = {"content-type": "application/json"}
         data = {"id": 42, "jsonrpc": "2.0", "method": method, "params": params}
-        print(f"request:url:{self.url},data:\n{json.dumps(data)}")
+        request_options = {} if timeout is None else {"timeout": timeout}
+        if verbose:
+            print(f"request:url:{self.url},data:\n{json.dumps(data)}")
         for i in range(try_count):
             try:
                 response = requests.post(
-                    self.url, data=json.dumps(data), headers=headers
+                    self.url, data=json.dumps(data), headers=headers, **request_options
                 ).json()
-                print(f"response:\n{json.dumps(response)}")
+                if verbose:
+                    print(f"response:\n{json.dumps(response)}")
                 if "error" in response.keys():
                     error_message = response["error"].get("message", "Unknown error")
                     raise Exception(f"Error: {error_message}")
 
                 return response.get("result", None)
             except requests.exceptions.ConnectionError as e:
-                print(e)
-                print("request too quickly, wait 2s")
+                if verbose:
+                    print(e)
+                if try_count == 1:
+                    raise
+                if verbose:
+                    print("request too quickly, wait 2s")
                 time.sleep(2)
                 continue
             except Exception as e:
-                print("Exception:", e)
+                if verbose:
+                    print("Exception:", e)
                 raise e
         raise Exception("request time out")
 

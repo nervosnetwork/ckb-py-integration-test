@@ -38,10 +38,18 @@ class TestExceededMaximumCycles(CkbTest):
             data="0x1234",
             hash_type="type",
             api_url=node.getClient().url,
+            # Always cover the multi-input sighash path, independent of the
+            # indexer's coin order and the first selected cell's capacity.
+            min_input_count=2,
         )
+        assert len(tx["inputs"]) >= 2
+        assert len(tx["witnesses"]) == len(tx["inputs"])
         invoke_hash = self.node.getClient().send_test_transaction(tx, "passthrough")
         self.node.getClient().get_transaction(invoke_hash)
         self.Node.wait_get_transaction(self.node, invoke_hash, "rejected")
+
+        rejected = self.node.getClient().get_transaction(invoke_hash)["tx_status"]
+        assert "ExceededMaximumCycles" in (rejected["reason"] or ""), rejected
 
         with pytest.raises(Exception) as exc_info:
             invoke_hash = self.node.getClient().send_transaction(tx, "passthrough")

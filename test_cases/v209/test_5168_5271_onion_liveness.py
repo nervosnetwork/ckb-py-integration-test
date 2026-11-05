@@ -119,7 +119,7 @@ def _find_tor_binary():
 def _find_ckb_binary():
     configured = os.getenv("CKB_BINARY_PATH")
     binary = Path(
-        configured or Path(get_project_root()) / "download" / "current" / "ckb"
+        configured or Path(get_project_root()) / "download" / "0.209.0" / "ckb"
     ).expanduser()
     if not binary.is_file():
         pytest.skip(f"CKB binary was not found: {binary}; set CKB_BINARY_PATH")

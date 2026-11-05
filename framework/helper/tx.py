@@ -1,5 +1,6 @@
 from framework.helper.ckb_cli import *
 from framework.rpc import RPCClient
+from framework.helper.signed_transaction import build_tx_info as _build_signed_tx_info
 import time, random
 
 
@@ -124,17 +125,7 @@ def build_send_transfer_self_tx_with_input(
 
 
 def build_tx_info(tmp_tx_file):
-    with open(tmp_tx_file, "r") as file:
-        tx_info_str = file.read()
-    tx = json.loads(tx_info_str)
-    sign_keys = list(tx["signatures"].keys())[0]
-    witness = (
-        "0x5500000010000000550000005500000041000000"
-        + tx["signatures"][sign_keys][0][2:]
-    )
-    tx_msg = tx["transaction"]
-    tx_msg["witnesses"] = [witness]
-    return tx_msg
+    return _build_signed_tx_info(tmp_tx_file)
 
 
 def build_tx_info_err(tmp_tx_file):
