@@ -236,7 +236,7 @@ class TestOrphanTx(CkbTest):
          4. All child transactions received by node 2 go into the orphan pool.
          5. orphan pool will empty until 120s pass
          6. query tx pool orphan size not removed
-         7. Send parent transaction 1 to node 2.
+         7. Send parent transaction 1 to node 2 and mine until all children commit.
 
         """
         # 1. Send parent transaction 1 to node 1.
@@ -273,8 +273,13 @@ class TestOrphanTx(CkbTest):
         #
         #  ...
 
+        expected_tx_hashes = [tx1_hash]
         account1_tx_hash = self.send_multiple_self_transactions(
-            self.node1, tx1_hash, self.Config.ACCOUNT_PRIVATE_1, 5
+            self.node1,
+            tx1_hash,
+            self.Config.ACCOUNT_PRIVATE_1,
+            5,
+            tx_hashes=expected_tx_hashes,
         )
         # account2_tx_hash = self.send_multiple_self_transactions(self.node1, tx2_hash,
         #                                                         self.Config.ACCOUNT_PRIVATE_2, 5)
@@ -292,7 +297,11 @@ class TestOrphanTx(CkbTest):
         # 5. orphan pool will empty until 120s pass
         time.sleep(150)
         account1_tx_hash = self.send_multiple_self_transactions(
-            self.node1, account1_tx_hash, self.Config.ACCOUNT_PRIVATE_1, 5
+            self.node1,
+            account1_tx_hash,
+            self.Config.ACCOUNT_PRIVATE_1,
+            5,
+            tx_hashes=expected_tx_hashes,
         )
         time.sleep(10)
 
@@ -305,10 +314,44 @@ class TestOrphanTx(CkbTest):
         tx1 = self.node1.getClient().get_transaction(tx1_hash)
         del tx1["transaction"]["hash"]
         self.node2.getClient().send_transaction(tx1["transaction"])
-        for i in range(10):
+
+        client = self.node2.getClient()
+
+        def transaction_statuses():
+            return {
+                tx_hash: (
+                    (client.get_transaction(tx_hash) or {}).get("tx_status") or {}
+                ).get("status", "unknown")
+                for tx_hash in expected_tx_hashes
+            }
+
+        deadline = time.monotonic() + 120
+        completed = False
+        for _ in range(60):
             self.Miner.miner_with_version(self.node2, "0x0")
-        node2_pool = self.node2.getClient().tx_pool_info()
-        assert node2_pool["pending"] == "0x0"
+            pool = client.tx_pool_info()
+            if all(
+                int(pool[key], 16) == 0
+                for key in ("pending", "proposed", "orphan", "verify_queue_size")
+            ):
+                statuses = transaction_statuses()
+                if all(status == "committed" for status in statuses.values()):
+                    completed = True
+                    break
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(0.5)
+
+        if not completed:
+            statuses = transaction_statuses()
+            remaining = {
+                tx_hash: status
+                for tx_hash, status in statuses.items()
+                if status != "committed"
+            }
+            self.fail(
+                f"transactions did not commit: {remaining}; pool: {client.tx_pool_info()}"
+            )
 
     def test_send_max_orphan_tx(self):
         """
@@ -439,7 +482,9 @@ class TestOrphanTx(CkbTest):
         node2_pool = self.node2.getClient().tx_pool_info()
         assert node2_pool["pending"] == "0x0"
 
-    def send_multiple_self_transactions(self, node, tx_hash, account_private, size):
+    def send_multiple_self_transactions(
+        self, node, tx_hash, account_private, size, tx_hashes=None
+    ):
         for i in range(size):
             tx_hash = self.Tx.send_transfer_self_tx_with_input(
                 [tx_hash],
@@ -449,7 +494,9 @@ class TestOrphanTx(CkbTest):
                 fee=1090,
                 api_url=node.getClient().url,
             )
-            self.Tx.send_transfer_self_tx_with_input(
+            if tx_hashes is not None:
+                tx_hashes.append(tx_hash)
+            side_tx_hash = self.Tx.send_transfer_self_tx_with_input(
                 [tx_hash],
                 ["0x1"],
                 account_private,
@@ -457,6 +504,8 @@ class TestOrphanTx(CkbTest):
                 fee=1090,
                 api_url=node.getClient().url,
             )
+            if tx_hashes is not None:
+                tx_hashes.append(side_tx_hash)
         return tx_hash
 
     def send_multiple_linked_self_transactions(
