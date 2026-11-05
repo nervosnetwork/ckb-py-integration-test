@@ -67,3 +67,7 @@ by node exit signals of unidentified origin. The revised graph case passed all
 and six candidate scenarios confirmed the replacement. These are different
 outcomes, not a matched performance ranking. The full source/toolchain matrix has
 not been rerun for this submission. Active failures remain assertions.
+
+Contract C sources, the pinned header dependency, and manual rebuild instructions
+are in the [VM fixture guide](../../../source/contract/README.vm-fixtures.md). Manual outputs are separate
+from the hash-pinned inputs used by pytest.

@@ -1,0 +1,33 @@
+# Manual contract builds only; pytest uses the checked-in ELF files.
+RISCV_CLANG ?= clang
+CKB_STDLIB ?= tmp/ckb-c-stdlib
+STDLIB_COMMIT ?= 6bf2bca668e0db5f9eb120eb78b31782899ef90d
+OUT ?= tmp/vm-fixtures
+
+VM_FIXTURES := current_cycles exec_callee exec_caller_from_cell_data \
+  spawn_callee_current_cycles spawn_callee_exec_callee spawn_callee_exec_caller \
+  spawn_caller_current_cycles spawn_caller_exec
+
+TARGET_FLAGS := --target=riscv64-unknown-elf -march=rv64imc -mabi=lp64
+CFLAGS := -O3 -fno-builtin -nostdinc -nostdlib -fuse-ld=lld \
+  -DCKB_NO_ENTRY_GP -DCKB_C_STDLIB_PRINTF -DCKB_C_STDLIB_PRINTF_BUFFER_SIZE=1024 \
+  -I$(CKB_STDLIB) -I$(CKB_STDLIB)/libc -I$(CKB_STDLIB)/molecule \
+  -fdata-sections -ffunction-sections
+LDFLAGS := -Wl,-static -Wl,--gc-sections -Wl,-z,max-page-size=4096
+STDLIB_INPUTS := $(shell find $(CKB_STDLIB) -type f \( -name '*.h' -o -name '*.c' \) 2>/dev/null)
+
+.PHONY: all check-deps
+all: $(addprefix $(OUT)/,$(VM_FIXTURES)) $(OUT)/cpu_budget_stress_1b
+
+check-deps:
+	@test -f "$(CKB_STDLIB)/ckb_syscalls.h" || { echo "Prepare CKB_STDLIB as described in README.vm-fixtures.md"; exit 1; }
+	@test "$$(git -C "$(CKB_STDLIB)" rev-parse HEAD)" = "$(STDLIB_COMMIT)" || { echo "CKB_STDLIB commit differs from STDLIB_COMMIT"; exit 1; }
+
+$(OUT)/%: %.c spawn_utils.h $(STDLIB_INPUTS) Makefile.vm-fixtures | check-deps
+	@mkdir -p "$(OUT)"
+	$(RISCV_CLANG) $(TARGET_FLAGS) $(CFLAGS) $(LDFLAGS) "$<" -o "$@"
+
+$(OUT)/cpu_budget_stress_1b: cpu_budget_stress_1b.S cpu_budget_stress_1b.ld Makefile.vm-fixtures
+	@mkdir -p "$(OUT)"
+	$(RISCV_CLANG) $(TARGET_FLAGS) -nostdlib -fuse-ld=lld \
+	  -Wl,-T,cpu_budget_stress_1b.ld -Wl,--no-relax -Wl,-z,max-page-size=4096 "$<" -o "$@"

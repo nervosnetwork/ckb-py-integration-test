@@ -199,3 +199,7 @@ venv/bin/python -m pytest test_cases/tx_pool_refactor/test_pool_performance.py
 TPF-03 允许旧交易或 RBF 替换交易最终确认；替换入池不保证替换交易上链。模板刷新仅观测10秒，超窗记录 `template_refresh_seconds=null`、实际观察时长和残留hash，继续核对实际区块的冲突互斥、失效交易清理及新交易确认。`graph-template-refresh` 保存刷新观测，`graph-cost` 保存实际赢家和完整样本；不同赢家的样本分别解释。
 
 当前未映射的集成前提与恢复点见 [主测试文档](../../reviews/ckb-pr-5316-non-test.md)：NTD-29、NTD-36、NTD-59。NTD-85 已有响应表征入口，参数上限的产品预期仍待确认。末四项 P2P 专项仍单独保留，不用本地 notify 代替。静态收集和辅助测试结果不代表 CKB 运行结果。
+
+Contract C sources, the pinned header dependency, and manual rebuild instructions
+are in the [VM fixture guide](../../source/contract/README.vm-fixtures.md). Manual outputs are separate
+from the hash-pinned inputs used by pytest.
