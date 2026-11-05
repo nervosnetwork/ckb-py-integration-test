@@ -34,14 +34,11 @@ class TestRelayerRetryAfterFullVerifyQueue(CkbTest):
             )
             cls.sender.start()
             cls.receiver.start()
-            cls._connect_until_ready(cls.sender, cls.receiver)
             cls.Miner.make_tip_height_number(cls.sender, 30)
+            cls.receiver.connected(cls.sender)
             cls.Node.wait_node_height(cls.receiver, 30, 60)
         except Exception:
-            cls.sender.stop()
-            cls.receiver.stop()
-            cls.sender.clean()
-            cls.receiver.clean()
+            cls.teardown_class()
             raise
 
     @classmethod
@@ -134,11 +131,8 @@ class TestRelayerRetryAfterFullVerifyQueue(CkbTest):
         for batch_start in range(start_index, start_index + max_txs, batch_size):
             for index in range(batch_start, batch_start + batch_size):
                 tx = self._unknown_transaction(index, witness_bytes)
-                self._notify_filler_transaction(tx)
-            expected_size = previous_size + batch_size
-            current_size = self._wait_verify_queue_progress(
-                previous_size, expected_size
-            )
+                self._call_rpc_quiet(self.receiver, "notify_transaction", [tx])
+            current_size = self._wait_verify_queue_progress(previous_size)
             if current_size == previous_size:
                 assert previous_size > 0
                 return previous_size
@@ -174,38 +168,19 @@ class TestRelayerRetryAfterFullVerifyQueue(CkbTest):
             "witnesses": ["0x" + "00" * witness_bytes],
         }
 
-    def _notify_filler_transaction(self, tx):
-        self._call_rpc_quiet(self.receiver, "notify_transaction", [tx])
-
-    @staticmethod
-    def _connect_until_ready(node_a, node_b):
-        for _ in range(12):
-            node_a.connected(node_b)
-            node_b.connected(node_a)
-            if TestRelayerRetryAfterFullVerifyQueue._has_peer(
-                node_a, node_b
-            ) and TestRelayerRetryAfterFullVerifyQueue._has_peer(node_b, node_a):
-                return
-            time.sleep(5)
-        raise AssertionError("nodes are not connected")
-
-    @staticmethod
-    def _has_peer(node, peer):
-        peer_id = peer.get_peer_id()
-        return any(p["node_id"] == peer_id for p in node.getClient().get_peers())
-
     @staticmethod
     def _wait_connected(node, peer):
+        peer_id = peer.get_peer_id()
         for _ in range(30):
-            if TestRelayerRetryAfterFullVerifyQueue._has_peer(node, peer):
+            if any(p["node_id"] == peer_id for p in node.getClient().get_peers()):
                 return
             time.sleep(1)
         raise AssertionError("nodes are not connected")
 
-    def _wait_verify_queue_progress(self, previous_size, expected_size):
+    def _wait_verify_queue_progress(self, previous_size):
         for _ in range(50):
             current_size = self._verify_queue_size(self.receiver)
-            if current_size != previous_size or current_size >= expected_size:
+            if current_size != previous_size:
                 return current_size
             time.sleep(0.2)
         return self._verify_queue_size(self.receiver)

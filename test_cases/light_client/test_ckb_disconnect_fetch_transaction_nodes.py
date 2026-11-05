@@ -139,7 +139,6 @@ class TestCkbDisconnectFetchTransactionNodes(CkbTest):
             if state["status"] != "added":
                 break
         self.cluster.restart_all_node()
-        self.cluster.connected_all_nodes()
         self.cluster.ckb_nodes[0].start_miner()
         current_time = datetime.now()
         for i in range(200):
