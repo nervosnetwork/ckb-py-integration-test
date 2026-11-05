@@ -157,6 +157,12 @@ class TestPackingExactBudget(CkbTest):
 
     # TEST-MAP: NTD-30
     def test_equal_budget_includes_candidate_and_one_less_skips_it(self):
+        """
+        1. 先测量候选交易的实际字节与周期消耗。
+        2. 对等于预算和少一单位的节点逐项核对模板选择。
+        """
+
+        # 1. 先测量候选交易的实际字节与周期消耗。
         with self._node("probe", 8544) as probe:
             base_bytes = self._empty_block_bytes(probe.getClient())
             hashes, measured = self._candidates(probe, self._split(probe))
@@ -168,6 +174,7 @@ class TestPackingExactBudget(CkbTest):
         cycle_equal = big_cycles + medium_cycles
         assert byte_equal > base_bytes and cycle_equal > big_cycles
 
+        # 2. 对等于预算和少一单位的节点逐项核对模板选择。
         for name, port, max_bytes, max_cycles, is_equal in (
             ("byte_equal", 8546, byte_equal, None, True),
             ("byte_minus_one", 8548, byte_equal - 1, None, False),
@@ -276,6 +283,12 @@ class TestPackingExactBudget(CkbTest):
     def test_fallback_fee_estimate_uses_crossing_candidate_not_block_pack(self):
         # No configured estimator algorithm means the public RPC uses the
         # pool's fallback estimator; its high-priority target is five blocks.
+        """
+        1. 测量高优先级费率估计的候选交易与越界费率。
+        2. 分别设置字节和周期边界，核对估计值与真实打包结果。
+        """
+
+        # 1. 测量高优先级费率估计的候选交易与越界费率。
         with self._node("fee_probe", 8572) as probe:
             probe_client = probe.getClient()
             assert (
@@ -291,6 +304,7 @@ class TestPackingExactBudget(CkbTest):
             crossing_rate = fees[-1] * 1000 // size
             assert crossing_rate > 1000
 
+        # 2. 分别设置字节和周期边界，核对估计值与真实打包结果。
         for name, port, max_bytes, max_cycles, expected in (
             ("fee_byte_equal", 8574, 2 * size, None, crossing_rate),
             ("fee_byte_plus_one", 8576, 2 * size + 1, None, 1000),

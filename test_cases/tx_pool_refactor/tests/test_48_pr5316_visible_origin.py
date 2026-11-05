@@ -2,7 +2,6 @@
 
 import copy
 import os
-import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -10,11 +9,7 @@ from pathlib import Path
 import pytest
 
 from framework.basic import CkbTest
-from test_cases.tx_pool_refactor.tests.test_45_pr5316_time_budget_retry import (
-    _fixed_test_binary,
-    _sha256,
-    _two_ports,
-)
+from test_cases.network_verification.workload import unused_ports
 
 
 # Witness bytes: expected syscall status, syscall (header/extension), source,
@@ -175,17 +170,16 @@ class TestVisibleCellOrigin(CkbTest):
 
     # TEST-MAP: NTD-43
     def test_header_and_extension_visibility_for_inputs_and_expanded_deps(self):
-        binary = _fixed_test_binary(None)
-        version = subprocess.run(
-            [str(binary), "--version"],
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout.strip()
-        assert "60b8e34" in version, version
-        print(f"fixed test binary: {version}; sha256={_sha256(binary)}")
+        """
+        1. 准备节点、脚本与具有不同区块来源的输入和依赖。
+        2. 分别检查输入和普通依赖的区块头及扩展可见性。
+        3. 对尚在池中的输出重复检查输入与依赖来源。
+        4. 检查展开的依赖组成员使用自身区块来源。
+        5. 检查旧 VM 路径的缺失项结果并确认有效交易可入池。
+        """
 
-        rpc_port, p2p_port = _two_ports()
+        # 1. 准备节点、脚本与具有不同区块来源的输入和依赖。
+        rpc_port, p2p_port = unused_ports(2)
         node = self.CkbNode.init_dev_by_port(
             self.CkbNodeConfigPath.CURRENT_TEST,
             f"tx_pool/pr5316_visible_origin/{rpc_port}",
@@ -193,7 +187,6 @@ class TestVisibleCellOrigin(CkbTest):
             p2p_port,
         )
         node.prepare()
-        shutil.copy2(binary, node.ckb_bin_path)
         started = False
         try:
             node.start()
@@ -300,6 +293,8 @@ class TestVisibleCellOrigin(CkbTest):
             dep = {"out_point": {"tx_hash": split, "index": "0x1"}, "dep_type": "code"}
             # Both syscalls must distinguish a declared committed origin from
             # an omitted one, for the input and a normal cell dep alike.
+
+            # 2. 分别检查输入和普通依赖的区块头及扩展可见性。
             for syscall in (0, 1):
                 for source, index, origin, deps in (
                     (1, 0, input_origin, ()),
@@ -344,6 +339,8 @@ class TestVisibleCellOrigin(CkbTest):
 
             # A pool output has no transaction_info even if a header hash is
             # supplied. Exercise that condition once as input and once as dep.
+
+            # 3. 对尚在池中的输出重复检查输入与依赖来源。
             pending_tx = self._signed_cell(client, split, 2, key, probe_lock)
             pending = client.send_transaction(pending_tx)
             assert client.get_transaction(pending)["tx_status"]["status"] in {
@@ -382,6 +379,8 @@ class TestVisibleCellOrigin(CkbTest):
 
             # The dep-group container's block is not an origin of its expanded
             # member. The group cell is committed in a distinct later block.
+
+            # 4. 检查展开的依赖组成员使用自身区块来源。
             group_data = (
                 "0x"
                 + (1).to_bytes(4, "little").hex()
@@ -429,6 +428,8 @@ class TestVisibleCellOrigin(CkbTest):
 
             # In both old VM versions the gate first observes ITEM_MISSING
             # from load_header, then the absent extension ecall must fail.
+
+            # 5. 检查旧 VM 路径的缺失项结果并确认有效交易可入池。
             for fund_index, hash_type in ((5, "data"), (6, "data1")):
                 old_lock = {**v0_lock, "hash_type": hash_type}
                 old_tx = self._signed_cell(client, split, fund_index, key, old_lock)

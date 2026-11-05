@@ -4,6 +4,7 @@ import struct
 from pathlib import Path
 
 from framework.basic import CkbTest
+from test_cases.network_verification import workload
 
 
 class TestPersistenceCorruption(CkbTest):
@@ -36,6 +37,13 @@ class TestPersistenceCorruption(CkbTest):
 
     # TEST-MAP: NTD-62
     def test_broken_v2_wins_over_valid_v1_and_starts_empty(self):
+        """
+        1. 保存含有效交易的 v2 快照并提取可加载的 v1 载荷。
+        2. 先用 v1 载荷启动，确认它本身可以恢复交易。
+        3. 构造越界或损坏的 v2 快照，逐项确认拒绝并以空池启动。
+        """
+
+        # 1. 保存含有效交易的 v2 快照并提取可加载的 v1 载荷。
         client = self.node.getClient()
         private_key = self.Config.ACCOUNT_PRIVATE_2
         account = self.Ckb_cli.util_key_info_by_private_key(private_key)
@@ -56,50 +64,69 @@ class TestPersistenceCorruption(CkbTest):
         )
         assert retained in client.get_raw_tx_pool(False)["pending"]
         pool_limit = int(client.tx_pool_info()["max_tx_pool_size"], 16)
-        self.node.stop()
+        workload.stop_and_assert_process_exit(self.node)
 
         v2 = self._saved_v2(self.node)
         snapshot = v2.read_bytes()
         assert snapshot[:8] == b"CKBTPV2\0"
         accepted_len = struct.unpack_from("<Q", snapshot, 8)[0]
-        recovery_count = struct.unpack_from("<I", snapshot, 16)[0]
-        accepted_start = 20 + 20 * recovery_count
+        accepted_start = 16
         legacy_payload = snapshot[accepted_start : accepted_start + accepted_len]
-        assert accepted_len > 4 and legacy_payload != b"\x04\0\0\0"
+        assert accepted_len > 4
+        assert struct.unpack_from("<I", legacy_payload)[0] == len(legacy_payload)
+        assert snapshot[accepted_start + accepted_len :] == b"\x04\0\0\0"
         v1 = v2.with_suffix(".v1")
 
-        # First prove this same legacy payload is loadable. Otherwise an empty
-        # pool below would not distinguish v2 precedence from a broken v1.
+        # 先证明同一个当前 v2 可恢复，再证明派生 v1 可恢复，排除坏正对照。
+        self.node.start()
+        workload.wait_for(
+            lambda: retained in self.node.getClient().get_raw_tx_pool(False)["pending"],
+            "valid v2 replay",
+        )
+        workload.stop_and_assert_process_exit(self.node)
+
+        # 2. 先用 v1 载荷启动，确认它本身可以恢复交易。
         v2.unlink()
         v1.write_bytes(legacy_payload)
         self.node.start()
         try:
-            assert retained in self.node.getClient().get_raw_tx_pool(False)["pending"]
+            workload.wait_for(
+                lambda: retained
+                in self.node.getClient().get_raw_tx_pool(False)["pending"],
+                "valid v1 replay",
+            )
             print("v1-only: retained transaction restored")
         finally:
-            self.node.stop()
+            workload.stop_and_assert_process_exit(self.node)
 
         # A sparse file crosses the derived read bound without allocating its
         # full logical length. The other fixtures exercise header/section and
-        # recovery-metadata validation after the bounded read.
+        # independent TransactionVec validation after the bounded read.
+
+        # 3. 构造越界或损坏的 v2 快照，逐项确认拒绝并以空池启动。
         scale = max(pool_limit, 180_000_000)
         pipeline = 384_000_000 * scale // 180_000_000
         read_bound = (pool_limit + pipeline) * 2 + 1024 * 1024
         empty_vec = b"\x04\0\0\0"
-        mismatch = (
-            b"CKBTPV2\0" + struct.pack("<QI", 4, 1) + b"\0" * 20 + empty_vec + empty_vec
-        )
+        header = b"CKBTPV2\0" + struct.pack("<Q", len(legacy_payload))
         cases = [
-            ("bad header", b"BROKENV2", "invalid v2 header"),
+            ("bad magic", b"BROKENV2", "invalid v2 header"),
+            ("truncated magic", b"CKBTPV2", "invalid v2 header"),
+            ("truncated length", b"CKBTPV2\0" + b"\0" * 7, "missing accepted length"),
             (
                 "declared length",
-                b"CKBTPV2\0" + struct.pack("<QI", 9999, 0),
-                "declared sections exceed file length",
+                b"CKBTPV2\0" + struct.pack("<Q", 9999) + empty_vec,
+                "declared accepted section exceeds file length",
             ),
             (
-                "metadata count",
-                mismatch,
-                "recovery metadata and transaction counts differ",
+                "broken Accepted",
+                header + b"\0" * len(legacy_payload) + empty_vec,
+                "TransactionVec",
+            ),
+            (
+                "broken Recovery",
+                header + legacy_payload + struct.pack("<I", 5),
+                "TransactionVec",
             ),
             ("read bound", None, "exceeds bound"),
         ]
@@ -136,5 +163,5 @@ class TestPersistenceCorruption(CkbTest):
                     )
                 print(f"{label}: empty pool; unknown transaction; {errors[-1]}")
             finally:
-                self.node.stop()
+                workload.stop_and_assert_process_exit(self.node)
         self.did_pass = True

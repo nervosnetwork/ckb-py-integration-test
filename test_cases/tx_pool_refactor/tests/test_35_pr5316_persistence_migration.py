@@ -4,6 +4,7 @@ import struct
 from pathlib import Path
 
 from framework.basic import CkbTest
+from test_cases.network_verification import workload
 
 
 class TestPersistenceMigration(CkbTest):
@@ -38,9 +39,8 @@ class TestPersistenceMigration(CkbTest):
     def _accepted_bytes(v2):
         data = v2.read_bytes()
         assert data[:8] == b"CKBTPV2\0"
-        accepted_len, recovery_count = struct.unpack_from("<QI", data, 8)
-        assert recovery_count == 0
-        start = 20
+        accepted_len = struct.unpack_from("<Q", data, 8)[0]
+        start = 16
         end = start + accepted_len
         assert end + 4 == len(data)
         accepted = data[start:end]
@@ -51,6 +51,14 @@ class TestPersistenceMigration(CkbTest):
 
     # TEST-MAP: NTD-63
     def test_normal_save_migrates_v1_to_readable_v2_and_removes_legacy(self):
+        """
+        1. 准备待持久化的有效池内交易。
+        2. 从真实 v2 快照生成可读的 v1 文件。
+        3. 重启节点，核对 v1 恢复出的交易。
+        4. 正常停止并重启，确认生成 v2、删除旧 v1 且交易仍可读。
+        """
+
+        # 1. 准备待持久化的有效池内交易。
         client = self.node.getClient()
         key = self.Config.ACCOUNT_PRIVATE_2
         account = self.Ckb_cli.util_key_info_by_private_key(key)
@@ -70,10 +78,13 @@ class TestPersistenceMigration(CkbTest):
             api_url=client.url,
         )
         assert set(client.get_raw_tx_pool(False)["pending"]) == {retained}
+        original_body = client.get_transaction(retained)["transaction"]
 
         # Derive a v1 fixture from a real v2 save, so the exact packed
         # transaction is known to be valid on this node's current chain.
-        self.node.stop()
+
+        # 2. 从真实 v2 快照生成可读的 v1 文件。
+        workload.stop_and_assert_process_exit(self.node)
         v2 = self._v2(self.node)
         original_accepted = self._accepted_bytes(v2)
         v1 = v2.with_suffix(".v1")
@@ -82,21 +93,28 @@ class TestPersistenceMigration(CkbTest):
         v2.unlink()
         v1.write_bytes(original_accepted)
 
+        # 3. 重启节点，核对 v1 恢复出的交易。
         self.node.start()
         assert v1.read_bytes() == original_accepted
         assert not v2.exists()
         assert set(client.get_raw_tx_pool(False)["pending"]) == {retained}
-        assert client.get_transaction(retained)["transaction"]["hash"] == retained
+        assert client.get_transaction(retained)["transaction"] == original_body
+        assert self.node.get_connected_count() == 0
 
         # Graceful stop invokes the normal writer; its successful return must
         # leave a complete v2 snapshot and retire the migration input.
-        self.node.stop()
+
+        # 4. 正常停止并重启，确认生成 v2、删除旧 v1 且交易仍可读。
+        workload.stop_and_assert_process_exit(self.node)
         assert v2.is_file() and not v1.exists() and not tmp.exists()
         assert self._accepted_bytes(v2) == original_accepted
+        log = (Path(self.node.ckb_dir) / "node.log").read_text()
+        assert "failed to save tx-pool" not in log.lower(), log
 
         self.node.start()
         assert set(client.get_raw_tx_pool(False)["pending"]) == {retained}
-        assert client.get_transaction(retained)["transaction"]["hash"] == retained
+        assert client.get_transaction(retained)["transaction"] == original_body
+        assert self.node.get_connected_count() == 0
         print(
             f"migrated={retained}; v2_bytes={v2.stat().st_size}; "
             "legacy_absent=True; temp_absent=True; v2_reload=True"

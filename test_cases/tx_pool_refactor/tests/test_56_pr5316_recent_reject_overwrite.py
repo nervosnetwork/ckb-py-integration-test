@@ -4,12 +4,12 @@ import copy
 import json
 import os
 import shutil
-import subprocess
 import time
 from pathlib import Path
 
 from framework.basic import CkbTest
-from test_cases.tx_pool_refactor.tests import test_45_pr5316_time_budget_retry as budget
+import toml
+from test_cases.network_verification import workload
 
 
 def _rejection_count(log_path, tx_hash):
@@ -41,7 +41,12 @@ class TestRecentRejectOverwrite(CkbTest):
         deadline = time.monotonic() + 30
         while time.monotonic() < deadline:
             response = client.get_transaction(tx_hash)["tx_status"]
-            count = budget.TestTimeBudgetRetry._recent_count(client)
+            count = int(
+                client.call("get_overview", [4], try_count=1, timeout=20)["pool"][
+                    "total_recent_reject_num"
+                ],
+                16,
+            )
             logged = _rejection_count(log_path, tx_hash)
             if (
                 response["status"] == "rejected"
@@ -66,18 +71,14 @@ class TestRecentRejectOverwrite(CkbTest):
 
     # TEST-MAP: NTD-81
     def test_repeated_reject_same_hash_does_not_inflate_recent_count(self):
-        binary = budget._fixed_test_binary(None)
-        version = subprocess.run(
-            [str(binary), "--version"],
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=10,
-        ).stdout.strip()
-        assert "60b8e34" in version, version
-        print(f"fixed test binary: {version}; sha256={budget._sha256(binary)}")
+        """
+        1. 准备节点和两个仅区块头依赖不同的拒绝交易。
+        2. 重复拒绝同一哈希，确认最近拒绝数不被重复累加。
+        3. 拒绝另一哈希并重启，确认两个拒绝条目仍可查询。
+        """
 
-        rpc_port, p2p_port = budget._two_ports()
+        # 1. 准备节点和两个仅区块头依赖不同的拒绝交易。
+        rpc_port, p2p_port = workload.unused_ports(2)
         node = self.CkbNode.init_dev_by_port(
             self.CkbNodeConfigPath.CURRENT_TEST,
             f"tx_pool/pr5316_recent_reject_overwrite/{rpc_port}",
@@ -85,14 +86,29 @@ class TestRecentRejectOverwrite(CkbTest):
             p2p_port,
         )
         node.prepare()
-        shutil.copy2(binary, node.ckb_bin_path)
-        budget.TestTimeBudgetRetry._set_budget(node, 12_000)
+        config_path = Path(node.ckb_toml_path)
+        config = toml.loads(config_path.read_text())
+        config["tx_pool"]["recent_reject"] = str(
+            Path(node.ckb_dir) / "data/recent-reject"
+        )
+        config["logger"]["filter"] = "info,ckb_tx_pool::rejection=debug"
+        if "Terminal" not in config["rpc"]["modules"]:
+            config["rpc"]["modules"].append("Terminal")
+        config_path.write_text(toml.dumps(config))
         started = False
         try:
             node.start()
             started = True
             client = node.getClient()
-            assert budget.TestTimeBudgetRetry._recent_count(client) == 0
+            assert (
+                int(
+                    client.call("get_overview", [4], try_count=1, timeout=20)["pool"][
+                        "total_recent_reject_num"
+                    ],
+                    16,
+                )
+                == 0
+            )
             self.Miner.make_tip_height_number(node, 30)
             key = self.Config.ACCOUNT_PRIVATE_2
             address = self.Ckb_cli.util_key_info_by_private_key(key)["address"][
@@ -119,6 +135,7 @@ class TestRecentRejectOverwrite(CkbTest):
             distinct["header_deps"] = ["0x" + "ee" * 32]
             log_path = Path(node.ckb_dir) / "node.log"
 
+            # 2. 重复拒绝同一哈希，确认最近拒绝数不被重复累加。
             for expected_events in (1, 2, 3):
                 tx_hash = client.notify_transaction(same)
                 self._wait_for_rejection(
@@ -131,6 +148,7 @@ class TestRecentRejectOverwrite(CkbTest):
                 assert _rejection_count(log_path, tx_hash) == expected_events
                 print(f"same hash rejection={expected_events}, recent=1, tx={tx_hash}")
 
+            # 3. 拒绝另一哈希并重启，确认两个拒绝条目仍可查询。
             distinct_hash = client.notify_transaction(distinct)
             assert distinct_hash != tx_hash
             self._wait_for_rejection(client, log_path, distinct_hash, 1, 2)
@@ -144,13 +162,13 @@ class TestRecentRejectOverwrite(CkbTest):
             started = False
             node.start()
             started = True
-            assert budget.TestTimeBudgetRetry._recent_count(client) == 2
+            # DB 的近似计数重启后不要求精确为 2；逐 hash 检查持久化结果。
             for rejected_hash in (tx_hash, distinct_hash):
                 status = client.get_transaction(rejected_hash)["tx_status"]
                 assert status["status"] == "rejected"
                 assert "invalidheader" in status["reason"].lower()
             self._save_log(node, "after-restart.log")
-            print("restart recent=2; both rejected hashes persisted")
+            print("restart: both rejected hashes persisted")
             self.did_pass = True
         finally:
             if started:

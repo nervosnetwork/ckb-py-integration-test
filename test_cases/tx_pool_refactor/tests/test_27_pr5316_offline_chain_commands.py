@@ -58,6 +58,13 @@ class TestOfflineChainCommands(CkbTest):
 
     # TEST-MAP: NTD-69
     def test_import_and_replay_release_chain_and_temporary_db(self):
+        """
+        1. 从源节点导出区块并确认导出文件非空。
+        2. 离线导入并分别执行检查和分析回放，确认临时目录被释放。
+        3. 启动目标节点，核对区块高度及链顶哈希。
+        """
+
+        # 1. 从源节点导出区块并确认导出文件非空。
         export_dir = Path(self.source.ckb_dir) / "export"
         export_dir.mkdir()
         self._run(
@@ -74,6 +81,8 @@ class TestOfflineChainCommands(CkbTest):
         assert export_file.is_file() and export_file.stat().st_size > 0
 
         # No node, pool consumer or relay consumer runs during these commands.
+
+        # 2. 离线导入并分别执行检查和分析回放，确认临时目录被释放。
         self._run(self.target, "import", str(export_file))
         replay_tmp = Path(self.target.ckb_dir) / "replay-tmp"
         replay_tmp.mkdir()
@@ -96,6 +105,8 @@ class TestOfflineChainCommands(CkbTest):
         assert set(replay_tmp.iterdir()) == before
 
         # A new node can open the same DB after every offline scope has exited.
+
+        # 3. 启动目标节点，核对区块高度及链顶哈希。
         self.target.start()
         assert self.target.getClient().get_tip_block_number() == 10
         assert self.target.getClient().get_tip_header()["hash"] == self.source_tip_hash

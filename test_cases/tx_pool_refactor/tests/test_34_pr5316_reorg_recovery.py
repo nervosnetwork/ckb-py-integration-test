@@ -70,6 +70,14 @@ class TestReorgRecovery(CkbTest):
     # TEST-MAP: NTD-20
     # TEST-MAP: NTD-22
     def test_reorg_readmits_detached_parent_and_preserves_valid_pool_children(self):
+        """
+        1. 准备两个节点的公共链和待恢复的父交易。
+        2. 构造池内子交易、直接依赖读取者与依赖组读取者。
+        3. 先提交父交易，并在分叉上构造竞争交易与较长链。
+        4. 同步分叉，确认脱离链的父交易恢复且有效池内后代仍在。
+        """
+
+        # 1. 准备两个节点的公共链和待恢复的父交易。
         client = self.node.getClient()
         peer_client = self.peer.getClient()
         key = self.Config.ACCOUNT_PRIVATE_2
@@ -115,6 +123,8 @@ class TestReorgRecovery(CkbTest):
         assert client.get_transaction(parent)["tx_status"]["status"] == "proposed"
 
         # These are resolved while the producer has no committed block origin.
+
+        # 2. 构造池内子交易、直接依赖读取者与依赖组读取者。
         child = self.Tx.send_transfer_self_tx_with_input(
             [parent],
             ["0x0"],
@@ -200,6 +210,8 @@ class TestReorgRecovery(CkbTest):
             group_container,
             group_reader,
         } <= self._pool_hashes()
+
+        # 3. 先提交父交易，并在分叉上构造竞争交易与较长链。
         self.Miner.miner_until_tx_committed(self.node, parent)
         assert client.get_transaction(parent)["tx_status"]["status"] == "committed"
         assert {child, dep_reader, group_container, group_reader} <= self._pool_hashes()
@@ -237,6 +249,8 @@ class TestReorgRecovery(CkbTest):
         assert new_tip != old_tip
         assert peer_client.get_tip_block_number() > client.get_tip_block_number()
         assert peer_client.get_transaction(parent)["tx_status"]["status"] == "unknown"
+
+        # 4. 同步分叉，确认脱离链的父交易恢复且有效池内后代仍在。
         self.node.connected(self.peer)
 
         # The independently known old Accepted set plus detached non-cellbase

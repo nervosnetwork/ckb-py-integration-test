@@ -3,16 +3,11 @@
 import json
 import os
 import re
-import shutil
 import socket
-import subprocess
 import time
 from pathlib import Path
 
 from framework.basic import CkbTest
-from test_cases.tx_pool_refactor.tests import (
-    test_45_pr5316_time_budget_retry as budget_helpers,
-)
 from test_cases.tx_pool_refactor.tests import (
     test_46_pr5316_budget_consensus as consensus_helpers,
 )
@@ -55,18 +50,17 @@ class TestNoPeerRelayDrain(CkbTest):
 
     # TEST-MAP: NTD-55
     def test_accepted_results_drain_without_peer_then_relay_after_connection(self):
+        """
+        1. 准备未连接的来源节点、接收节点及转发队列指标。
+        2. 同步共同链并在无对端时提交两笔有效交易。
+        3. 等待本地结果队列排空，确认未连接期间接收节点池为空。
+        4. 建立连接，确认两笔交易传播且队列最终清空。
+        """
+
+        # 1. 准备未连接的来源节点、接收节点及转发队列指标。
         log_dir = os.environ.get("CKB_PR5316_RELAY_DRAIN_LOG_DIR")
         if log_dir:
             Path(log_dir).mkdir(parents=True, exist_ok=True)
-        binary = budget_helpers._fixed_test_binary(log_dir)
-        version = subprocess.run(
-            [str(binary), "--version"],
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout.strip()
-        assert "60b8e34" in version, version
-        print(f"fixed test binary: {version}; sha256={budget_helpers._sha256(binary)}")
 
         source_rpc, source_p2p, receiver_rpc, receiver_p2p, metrics_port = _five_ports()
         source = self.CkbNode.init_dev_by_port(
@@ -85,7 +79,6 @@ class TestNoPeerRelayDrain(CkbTest):
         try:
             for node in (source, receiver):
                 node.prepare()
-                shutil.copy2(binary, node.ckb_bin_path)
             with Path(source.ckb_toml_path).open("a", encoding="utf-8") as config:
                 config.write(
                     "\n[metrics.exporter.prometheus]\n"
@@ -114,6 +107,7 @@ class TestNoPeerRelayDrain(CkbTest):
                 raise AssertionError("relay queue metrics did not start")
             assert before_queue["size"] == 0 and before_queue["capacity"] > 0
 
+            # 2. 同步共同链并在无对端时提交两笔有效交易。
             self.Miner.make_tip_height_number(source, 30)
             key = self.Config.ACCOUNT_PRIVATE_2
             address = self.Ckb_cli.util_key_info_by_private_key(key)["address"][
@@ -166,6 +160,7 @@ class TestNoPeerRelayDrain(CkbTest):
             assert source.get_connected_count() == 0
             assert target.get_raw_tx_pool(False) == {"pending": [], "proposed": []}
 
+            # 3. 等待本地结果队列排空，确认未连接期间接收节点池为空。
             deadline = time.monotonic() + 15
             while time.monotonic() < deadline:
                 queue = _relay_queue(_metrics(metrics_port))
@@ -179,6 +174,7 @@ class TestNoPeerRelayDrain(CkbTest):
             assert queue["capacity"] == before_queue["capacity"]
             assert source.get_connected_count() == 0
 
+            # 4. 建立连接，确认两笔交易传播且队列最终清空。
             source.connected(receiver)
             deadline = time.monotonic() + 30
             while time.monotonic() < deadline:

@@ -246,8 +246,16 @@ class TestDiagnosticsStartup(CkbTest):
 
     # TEST-MAP: NTD-73
     def test_existing_profile_is_preserved_and_node_starts(self):
+        """
+        1. 准备 PROFILE 特性二进制和已有性能分析文件。
+        2. 启动节点，确认已有文件保留且节点可用。
+        """
+
+        # 1. 准备 PROFILE 特性二进制和已有性能分析文件。
         binary = self._feature_binary("PROFILE")
         # Keep the sentinel inside this test's own temporary directory.
+
+        # 2. 启动节点，确认已有文件保留且节点可用。
         with tempfile.TemporaryDirectory(prefix="pr5316-profile-") as directory:
             target = Path(directory) / "existing.trace"
             sentinel = b"existing-profile-must-remain"
@@ -267,7 +275,15 @@ class TestDiagnosticsStartup(CkbTest):
 
     # TEST-MAP: NTD-73
     def test_zero_console_buffer_and_publish_interval_are_diagnosed(self):
+        """
+        1. 准备 TRACE 特性二进制。
+        2. 逐一设置零缓冲区和零发布间隔，核对启动诊断。
+        """
+
+        # 1. 准备 TRACE 特性二进制。
         binary = self._feature_binary("TRACE")
+
+        # 2. 逐一设置零缓冲区和零发布间隔，核对启动诊断。
         for label, variable, value in (
             ("zero_buffer", "TOKIO_CONSOLE_BUFFER_CAPACITY", "0"),
             ("zero_interval", "TOKIO_CONSOLE_PUBLISH_INTERVAL", "0s"),
@@ -287,7 +303,15 @@ class TestDiagnosticsStartup(CkbTest):
 
     # TEST-MAP: NTD-73
     def test_console_record_path_is_rejected_without_creating_file(self):
+        """
+        1. 准备 TRACE 特性二进制。
+        2. 将控制台记录指向文件路径，确认启动拒绝且文件未创建。
+        """
+
+        # 1. 准备 TRACE 特性二进制。
         binary = self._feature_binary("TRACE")
+
+        # 2. 将控制台记录指向文件路径，确认启动拒绝且文件未创建。
         with tempfile.TemporaryDirectory(prefix="pr5316-console-") as directory:
             target = Path(directory) / "record.trace"
             env = {

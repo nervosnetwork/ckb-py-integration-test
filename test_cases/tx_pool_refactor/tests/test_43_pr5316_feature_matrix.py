@@ -36,6 +36,12 @@ def _source():
 
 # TEST-MAP: NTD-72
 def test_pinned_executable_feature_build_matrix():
+    """
+    1. 读取源代码位置和特性构建矩阵。
+    2. 逐项执行构建并核对可执行文件的特性配置。
+    """
+
+    # 1. 读取源代码位置和特性构建矩阵。
     source = _source()
     log_dir = os.environ.get("CKB_PR5316_MATRIX_LOG_DIR")
     if log_dir:
@@ -48,6 +54,8 @@ def test_pinned_executable_feature_build_matrix():
         ("profile_trace", ("profiling", "tokio-trace"), "--cfg tokio_unstable", True),
         ("integration_test", ("test",), None, True),
     )
+
+    # 2. 逐项执行构建并核对可执行文件的特性配置。
     with tempfile.TemporaryDirectory(prefix="pr5316-cargo-matrix-") as target:
         for name, features, rustflags, should_compile in cases:
             operation = "build" if should_compile else "check"

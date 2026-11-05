@@ -89,6 +89,13 @@ class TestPublicPoolProjection(CkbTest):
     # TEST-MAP: NTD-45
     # TEST-MAP: NTD-46
     def test_pending_gap_proposed_public_status_and_pool_totals(self):
+        """
+        1. 准备多个池内交易及不存在的交易哈希。
+        2. 在 Pending 阶段核对公开状态、池集合和统计总量。
+        3. 推进提案窗口，分别核对 Gap 与 Proposed 阶段的公开投影。
+        """
+
+        # 1. 准备多个池内交易及不存在的交易哈希。
         client = self.node.getClient()
         key = self.Config.ACCOUNT_PRIVATE_2
         account = self.Ckb_cli.util_key_info_by_private_key(key)
@@ -122,8 +129,11 @@ class TestPublicPoolProjection(CkbTest):
         ]
         unknown_hash = "0x" + "00" * 32
         assert unknown_hash not in hashes
+
+        # 2. 在 Pending 阶段核对公开状态、池集合和统计总量。
         self._assert_projection(hashes, "pending", unknown_hash)
 
+        # 3. 推进提案窗口，分别核对 Gap 与 Proposed 阶段的公开投影。
         short_ids = {tx_hash[:22] for tx_hash in hashes}
         assert len(short_ids) == len(hashes)
         deadline = time.monotonic() + 15

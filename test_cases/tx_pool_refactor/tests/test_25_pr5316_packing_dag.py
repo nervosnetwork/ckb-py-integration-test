@@ -232,21 +232,44 @@ class TestPackingDag(CkbTest):
 
     # TEST-MAP: NTD-27
     def test_high_fee_chain_packs_all_ancestors_before_descendant(self):
+        """
+        1. 构造高费率链并核对所有祖先先于后代打包。
+        """
+
+        # 1. 构造高费率链并核对所有祖先先于后代打包。
         self._assert_independent_shape("chain")
         self.did_pass = True
 
     # TEST-MAP: NTD-27
     def test_high_fee_fanout_packs_parent_once_before_children(self):
+        """
+        1. 构造高费率扇出图并核对共享父交易只打包一次。
+        """
+
+        # 1. 构造高费率扇出图并核对共享父交易只打包一次。
         self._assert_independent_shape("fanout")
         self.did_pass = True
 
     # TEST-MAP: NTD-27
     def test_chain_package_score_defers_leaf_behind_mid_rate_competitor(self):
+        """
+        1. 加入中等费率竞争者，核对链包评分决定的打包顺序。
+        """
+
+        # 1. 加入中等费率竞争者，核对链包评分决定的打包顺序。
         self._assert_independent_shape("chain", competitor_fee=50_000_000)
         self.did_pass = True
 
     # TEST-MAP: NTD-27
     def test_high_fee_diamond_packs_unique_ancestors_in_topological_order(self):
+        """
+        1. 清空交易池并准备菱形依赖图及独立竞争交易。
+        2. 核对祖先集合、周期与费用边界。
+        3. 推进提案窗口并检查模板中的拓扑顺序和预算。
+        4. 提交模板，核对区块内容、实际字节数和交易状态。
+        """
+
+        # 1. 清空交易池并准备菱形依赖图及独立竞争交易。
         client = self.node.getClient()
         client.clear_tx_pool()
         assert self._pool_entries() == {}
@@ -312,6 +335,8 @@ class TestPackingDag(CkbTest):
             fee=10_000,
             api_url=client.url,
         )
+
+        # 2. 核对祖先集合、周期与费用边界。
         graph = {parent, left, right, diamond}
         entries = self._pool_entries()
         assert set(entries) == graph | {competitor}
@@ -352,6 +377,7 @@ class TestPackingDag(CkbTest):
             entries[diamond]["size"], 16
         )
 
+        # 3. 推进提案窗口并检查模板中的拓扑顺序和预算。
         short_ids = {tx_hash[:22] for tx_hash in graph | {competitor}}
         assert len(short_ids) == 5  # This fixture does not force a short-ID collision.
         deadline = time.monotonic() + 15
@@ -380,6 +406,7 @@ class TestPackingDag(CkbTest):
             template["bytes_limit"], 16
         )
 
+        # 4. 提交模板，核对区块内容、实际字节数和交易状态。
         block = self.Miner.block_template_transfer_to_submit_block(
             copy.deepcopy(template)
         )

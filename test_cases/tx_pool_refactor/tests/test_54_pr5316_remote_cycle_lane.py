@@ -2,8 +2,7 @@
 
 import json
 import os
-import shutil
-import subprocess
+import socket
 import time
 from pathlib import Path
 
@@ -11,12 +10,19 @@ import toml
 
 from framework.basic import CkbTest
 from test_cases.tx_pool_refactor.tests import (
-    test_45_pr5316_time_budget_retry as budget_helpers,
-)
-from test_cases.tx_pool_refactor.tests import (
     test_46_pr5316_budget_consensus as consensus_helpers,
 )
-from test_cases.tx_pool_refactor.tests.test_47_pr5316_peer_timeout import _six_ports
+
+
+def _six_ports():
+    sockets = [socket.socket() for _ in range(6)]
+    try:
+        for sock in sockets:
+            sock.bind(("127.0.0.1", 0))
+        return [sock.getsockname()[1] for sock in sockets]
+    finally:
+        for sock in sockets:
+            sock.close()
 
 
 class TestRemoteCycleLane(CkbTest):
@@ -41,18 +47,16 @@ class TestRemoteCycleLane(CkbTest):
 
     # TEST-MAP: NTD-09
     def test_exact_and_plus_one_declared_cycles_both_verify_remotely(self):
+        """
+        1. 准备统一交易和两个验证周期阈值不同的接收节点。
+        2. 将同一声明周期分别放在阈值边界及边界上方。
+        3. 从来源节点传播交易，确认两个接收节点均完成验证。
+        """
+
+        # 1. 准备统一交易和两个验证周期阈值不同的接收节点。
         log_dir = os.environ.get("CKB_PR5316_CYCLE_LANE_LOG_DIR")
         if log_dir:
             Path(log_dir).mkdir(parents=True, exist_ok=True)
-        binary = budget_helpers._fixed_test_binary(log_dir)
-        version = subprocess.run(
-            [str(binary), "--version"],
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout.strip()
-        assert "60b8e34" in version, version
-        print(f"fixed test binary: {version}; sha256={budget_helpers._sha256(binary)}")
 
         source_rpc, source_p2p, exact_rpc, exact_p2p, plus_rpc, plus_p2p = _six_ports()
         source = self.CkbNode.init_dev_by_port(
@@ -76,7 +80,6 @@ class TestRemoteCycleLane(CkbTest):
         started = []
         try:
             source.prepare()
-            shutil.copy2(binary, source.ckb_bin_path)
             source.start()
             started.append(source)
             assert (
@@ -116,9 +119,10 @@ class TestRemoteCycleLane(CkbTest):
             # The same relay announcement carries the sender's actual cycles.
             # Changing only each receiver's local threshold puts that one
             # declaration exactly at the boundary or one cycle above it.
+
+            # 2. 将同一声明周期分别放在阈值边界及边界上方。
             for node, threshold in ((exact, cycles), (plus_one, cycles - 1)):
                 node.prepare()
-                shutil.copy2(binary, node.ckb_bin_path)
                 self._set_cycle_threshold(node, threshold)
                 node.start()
                 started.append(node)
@@ -153,6 +157,7 @@ class TestRemoteCycleLane(CkbTest):
                     "source did not connect to both cycle-threshold receivers"
                 )
 
+            # 3. 从来源节点传播交易，确认两个接收节点均完成验证。
             tx_hash = sender.send_transaction(candidate)
             sender_entry = self._accepted(sender, tx_hash)
             assert sender_entry is not None

@@ -71,6 +71,13 @@ class TestProposalRefcount(CkbTest):
 
     # TEST-MAP: NTD-24
     def test_second_proposal_survives_first_expiry_then_final_expiry_is_pending(self):
+        """
+        1. 准备交易并核对初始 Pending 阶段。
+        2. 在连续两个高度提案，核对引用计数及第一个提案到期后的阶段。
+        3. 再次提案并推进窗口，核对 Gap、Proposed 和最终 Pending。
+        """
+
+        # 1. 准备交易并核对初始 Pending 阶段。
         client = self.node.getClient()
         window = client.get_consensus()["tx_proposal_window"]
         closest = int(window["closest"], 16)
@@ -97,6 +104,7 @@ class TestProposalRefcount(CkbTest):
         short_id = tx_hash[:22]
         self._assert_phase(tx_hash, "pending", "pending")
 
+        # 2. 在连续两个高度提案，核对引用计数及第一个提案到期后的阶段。
         first = self._mine_without_committing([short_id])
         self._assert_height_oracle(tx_hash, [first], closest, farthest)
         second = self._mine_without_committing([short_id])
@@ -113,6 +121,8 @@ class TestProposalRefcount(CkbTest):
 
         # At the next tip the second proposal expires, while a fresh proposal
         # at that height is only Gap. Proposed must not mask that Gap.
+
+        # 3. 再次提案并推进窗口，核对 Gap、Proposed 和最终 Pending。
         third = self._mine_without_committing([short_id])
         assert third == second + farthest
         self._assert_height_oracle(tx_hash, [first, second, third], closest, farthest)
@@ -136,6 +146,12 @@ class TestProposalRefcount(CkbTest):
 
     # TEST-MAP: NTD-25
     def test_replacing_a_proposal_height_rebuilds_public_phases(self):
+        """
+        1. 准备公共链和含提案的目标交易。
+        2. 建立竞争分叉并替换提案高度，核对公开阶段重建。
+        """
+
+        # 1. 准备公共链和含提案的目标交易。
         client = self.node.getClient()
         client.clear_tx_pool()
         window = client.get_consensus()["tx_proposal_window"]
@@ -165,6 +181,7 @@ class TestProposalRefcount(CkbTest):
         common_tip = client.get_tip_header()["hash"]
         common_height = client.get_tip_block_number()
 
+        # 2. 建立竞争分叉并替换提案高度，核对公开阶段重建。
         peer = self.CkbNode.init_dev_by_port(
             self.CkbNodeConfigPath.CURRENT_TEST,
             "tx_pool/pr5316_proposal_refcount/fork_peer",
@@ -289,6 +306,12 @@ class TestProposalRefcount(CkbTest):
 
     # TEST-MAP: NTD-25
     def test_reorg_removes_old_proposal_without_replacement(self):
+        """
+        1. 准备公共链及已有提案的目标交易。
+        2. 建立没有目标提案的较长分叉，核对旧提案移除后的阶段。
+        """
+
+        # 1. 准备公共链及已有提案的目标交易。
         client = self.node.getClient()
         client.clear_tx_pool()
         window = client.get_consensus()["tx_proposal_window"]
@@ -317,6 +340,7 @@ class TestProposalRefcount(CkbTest):
         common_tip = client.get_tip_header()["hash"]
         common_height = client.get_tip_block_number()
 
+        # 2. 建立没有目标提案的较长分叉，核对旧提案移除后的阶段。
         peer = self.CkbNode.init_dev_by_port(
             self.CkbNodeConfigPath.CURRENT_TEST,
             "tx_pool/pr5316_proposal_refcount/remove_peer",

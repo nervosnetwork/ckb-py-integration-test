@@ -168,11 +168,18 @@ class TestCachedBlockCycles(CkbTest):
 
     # TEST-MAP: NTD-42
     def test_cached_proofs_still_obey_aggregate_cycle_limit_and_block_fee(self):
+        """
+        1. 测量各交易及整体的验证周期。
+        2. 对等于和小于整体周期的预算分别打包，核对区块费用与周期上限。
+        """
+
+        # 1. 测量各交易及整体的验证周期。
         with self._node("probe") as probe:
             _, measured_cycles, _ = self._fund_and_submit(probe)
         exact = sum(measured_cycles)
         assert min(measured_cycles) > 0 and max(measured_cycles) < exact - 1
 
+        # 2. 对等于和小于整体周期的预算分别打包，核对区块费用与周期上限。
         for name, limit, should_accept in (
             ("over", exact - 1, False),
             ("equal", exact, True),

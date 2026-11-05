@@ -93,6 +93,15 @@ class TestPublicPoolRpc(CkbTest):
     # leave no pool entry or verify task. Remote/batch/ID/compact/full-queue
     # branches are not covered here.
     def test_direct_transaction_exact_size_bound_and_next_byte(self):
+        """
+        1. 准备已上链输入和交易大小上限。
+        2. 构造大小恰好等于上限的交易并核对序列化大小。
+        3. 通过 send_transaction 提交边界交易，核对入池大小。
+        4. 通过 notify_transaction 提交同一交易，等待异步入池。
+        5. 增加一个字节后分别经两种入口提交，核对拒绝信息和空队列。
+        """
+
+        # 1. 准备已上链输入和交易大小上限。
         client = self.node.getClient()
         key = self.Config.ACCOUNT_PRIVATE_2
         account = self.Ckb_cli.util_key_info_by_private_key(key)
@@ -137,6 +146,7 @@ class TestPublicPoolRpc(CkbTest):
                 )
                 return self.Tx.build_tx_info(tx_file)
 
+        # 2. 构造大小恰好等于上限的交易并核对序列化大小。
         base = build_transaction(0)
         # Independently compute the in-block size used to pad the fixture and
         # to check the node's reported size.
@@ -149,6 +159,8 @@ class TestPublicPoolRpc(CkbTest):
 
         # (1) Equal to the limit: send_transaction accepts it and reports the
         # same size.
+
+        # 3. 通过 send_transaction 提交边界交易，核对入池大小。
         accepted = client.call(
             "send_transaction",
             [exact, "passthrough"],
@@ -163,6 +175,8 @@ class TestPublicPoolRpc(CkbTest):
         assert client.remove_transaction(accepted) is True
 
         # (2) The same body through notify_transaction; poll for async admission.
+
+        # 4. 通过 notify_transaction 提交同一交易，等待异步入池。
         notified = client.call(
             "notify_transaction",
             [exact],
@@ -180,6 +194,8 @@ class TestPublicPoolRpc(CkbTest):
         # (3) One byte over: both entrances return the size error naming actual
         # and maximum. The unchanged witness means a size (not signature) error
         # confirms the size gate runs before script verification.
+
+        # 5. 增加一个字节后分别经两种入口提交，核对拒绝信息和空队列。
         oversized = copy.deepcopy(exact)
         oversized["outputs_data"][0] += "00"
         assert self._serialized_size_in_block(oversized) == limit + 1
@@ -198,6 +214,13 @@ class TestPublicPoolRpc(CkbTest):
 
     # TEST-MAP: NTD-44
     def test_successful_send_is_queryable_and_duplicate_is_rejected(self):
+        """
+        1. 用已上链输入构造有效交易。
+        2. 提交交易并核对池和查询接口中的交易状态。
+        3. 再次提交相同交易，确认重复拒绝且原交易仍在池中。
+        """
+
+        # 1. 用已上链输入构造有效交易。
         client = self.node.getClient()
         fund_hash = self._committed_funding()
         transaction = self.Tx.build_send_transfer_self_tx_with_input(
@@ -208,12 +231,14 @@ class TestPublicPoolRpc(CkbTest):
             api_url=client.url,
         )
 
+        # 2. 提交交易并核对池和查询接口中的交易状态。
         tx_hash = client.send_transaction(transaction)
         response = client.get_transaction(tx_hash)
         assert tx_hash in self._pool_hashes()
         assert response["transaction"]["hash"] == tx_hash
         assert response["tx_status"]["status"] in ("pending", "proposed")
 
+        # 3. 再次提交相同交易，确认重复拒绝且原交易仍在池中。
         with pytest.raises(Exception) as duplicate:
             client.send_transaction(transaction)
         assert "duplicat" in str(duplicate.value).lower()
@@ -222,6 +247,13 @@ class TestPublicPoolRpc(CkbTest):
 
     # TEST-MAP: NTD-39
     def test_changed_witness_rechecks_same_raw_transaction_hash(self):
+        """
+        1. 提交原交易后移出池，保留相同的原始交易体。
+        2. 仅修改见证中的签名，确认交易体保持一致。
+        3. 重新提交并核对脚本错误与池中无该交易。
+        """
+
+        # 1. 提交原交易后移出池，保留相同的原始交易体。
         client = self.node.getClient()
         fund_hash = self._committed_funding()
         original = self.Tx.build_send_transfer_self_tx_with_input(
@@ -236,6 +268,7 @@ class TestPublicPoolRpc(CkbTest):
         assert client.remove_transaction(tx_hash) is True
         assert tx_hash not in self._pool_hashes()
 
+        # 2. 仅修改见证中的签名，确认交易体保持一致。
         changed = copy.deepcopy(original)
         signature = bytearray.fromhex(changed["witnesses"][0][2:])
         assert len(signature) > 32
@@ -246,6 +279,7 @@ class TestPublicPoolRpc(CkbTest):
             k: v for k, v in original.items() if k != "witnesses"
         }
 
+        # 3. 重新提交并核对脚本错误与池中无该交易。
         with pytest.raises(Exception) as rejected:
             client.send_transaction(changed)
         assert "script" in str(rejected.value).lower(), str(rejected.value)
@@ -254,6 +288,13 @@ class TestPublicPoolRpc(CkbTest):
 
     # TEST-MAP: NTD-48
     def test_clear_verify_queue_keeps_accepted_transaction(self):
+        """
+        1. 提交有效交易并确认进入交易池。
+        2. 清空验证队列。
+        3. 通过池和交易查询确认已接受交易仍在。
+        """
+
+        # 1. 提交有效交易并确认进入交易池。
         client = self.node.getClient()
         fund_hash = self._committed_funding()
         tx_hash = self.Tx.send_transfer_self_tx_with_input(
@@ -265,8 +306,10 @@ class TestPublicPoolRpc(CkbTest):
         )
         assert tx_hash in self._pool_hashes()
 
+        # 2. 清空验证队列。
         client.clear_tx_verify_queue()
 
+        # 3. 通过池和交易查询确认已接受交易仍在。
         response = client.get_transaction(tx_hash)
         assert tx_hash in self._pool_hashes()
         assert response["transaction"]["hash"] == tx_hash
@@ -275,6 +318,13 @@ class TestPublicPoolRpc(CkbTest):
 
     # TEST-MAP: NTD-33
     def test_same_tip_clear_invalidates_selected_template_owner(self):
+        """
+        1. 提交交易并准备包含它的区块模板。
+        2. 在链顶不变时清空交易池。
+        3. 重新取模板，确认工作编号更新且旧交易已移除。
+        """
+
+        # 1. 提交交易并准备包含它的区块模板。
         client = self.node.getClient()
         fund_hash = self._committed_funding()
         tx_hash = self.Tx.send_transfer_self_tx_with_input(
@@ -309,9 +359,12 @@ class TestPublicPoolRpc(CkbTest):
         assert prepared["parent_hash"] == tip_hash
         assert client.tx_pool_info()["tip_hash"] == tip_hash
 
+        # 2. 在链顶不变时清空交易池。
         client.clear_tx_pool()
         assert self._pool_hashes() == set()
         assert client.get_tip_header()["hash"] == tip_hash
+
+        # 3. 重新取模板，确认工作编号更新且旧交易已移除。
         refreshed = client.get_block_template()
         assert refreshed["parent_hash"] == tip_hash
         assert int(refreshed["work_id"], 16) > int(prepared["work_id"], 16)
@@ -325,6 +378,14 @@ class TestPublicPoolRpc(CkbTest):
 
     # TEST-MAP: NTD-34
     def test_unselected_independent_transaction_keeps_prior_template_valid(self):
+        """
+        1. 准备独立输入并取得已选交易的旧模板。
+        2. 提交未被旧模板选中的独立交易。
+        3. 检查新模板变化及独立交易当前仍未进入提交窗口。
+        4. 用旧工作编号提交旧模板，确认已选交易上链且独立交易仍在池中。
+        """
+
+        # 1. 准备独立输入并取得已选交易的旧模板。
         client = self.node.getClient()
         key = self.Config.ACCOUNT_PRIVATE_2
         fund_hash = self._committed_funding()
@@ -366,6 +427,7 @@ class TestPublicPoolRpc(CkbTest):
         tip_hash = client.get_tip_header()["hash"]
         assert prepared["parent_hash"] == tip_hash
 
+        # 2. 提交未被旧模板选中的独立交易。
         independent = self.Tx.send_transfer_self_tx_with_input(
             [split],
             ["0x1"],
@@ -376,6 +438,7 @@ class TestPublicPoolRpc(CkbTest):
         assert {selected, independent} <= self._pool_hashes()
         assert independent not in {tx["hash"] for tx in prepared["transactions"]}
 
+        # 3. 检查新模板变化及独立交易当前仍未进入提交窗口。
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
             refreshed = client.get_block_template()
@@ -389,6 +452,7 @@ class TestPublicPoolRpc(CkbTest):
         assert refreshed["work_id"] != prepared["work_id"]
         assert independent not in hashes  # Not yet in its commit window.
 
+        # 4. 用旧工作编号提交旧模板，确认已选交易上链且独立交易仍在池中。
         old_block = self.Miner.block_template_transfer_to_submit_block(
             copy.deepcopy(prepared)
         )
@@ -406,6 +470,12 @@ class TestPublicPoolRpc(CkbTest):
 
     # TEST-MAP: NTD-78
     def test_remove_local_removes_parent_and_descendant_once(self):
+        """
+        1. 构造池内父子交易并确认二者均被接受。
+        2. 移除父交易，确认父子交易一并消失且重复移除返回 false。
+        """
+
+        # 1. 构造池内父子交易并确认二者均被接受。
         client = self.node.getClient()
         fund_hash = self._committed_funding()
         parent_hash = self.Tx.send_transfer_self_tx_with_input(
@@ -424,6 +494,7 @@ class TestPublicPoolRpc(CkbTest):
         )
         assert {parent_hash, child_hash} <= self._pool_hashes()
 
+        # 2. 移除父交易，确认父子交易一并消失且重复移除返回 false。
         assert client.remove_transaction(parent_hash) is True
         assert {parent_hash, child_hash}.isdisjoint(self._pool_hashes())
         assert client.remove_transaction(parent_hash) is False

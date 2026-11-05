@@ -27,6 +27,15 @@ class TestLiveCellOverlay(CkbTest):
 
     # TEST-MAP: NTD-75
     def test_pool_overlay_precedes_chain_and_with_data_only_changes_data(self):
+        """
+        1. 构造已上链资金与池内父交易，确认父交易仍在待打包状态。
+        2. 分别查询链上已花费输入，确认池覆盖层会将其标为 unknown。
+        3. 查询池内父交易输出，确认覆盖层可见且 with_data 仅影响数据字段。
+        4. 用子交易花费父输出，确认该输出在池覆盖层中不再可用。
+        5. 提交子交易上链，核对已提交输出、已花费输入及不存在的输出状态。
+        """
+
+        # 1. 构造已上链资金与池内父交易，确认父交易仍在待打包状态。
         client = self.node.getClient()
         account = self.Ckb_cli.util_key_info_by_private_key(self.Config.MINER_PRIVATE_1)
         fund_hash = self.Ckb_cli.wallet_transfer_by_private_key(
@@ -51,6 +60,8 @@ class TestLiveCellOverlay(CkbTest):
 
         # A chain cell already spent by an Accepted pool transaction is not live
         # when the caller asks for the pool overlay.
+
+        # 2. 分别查询链上已花费输入，确认池覆盖层会将其标为 unknown。
         chain_only = client.get_live_cell_with_include_tx_pool(
             previous_output["index"],
             previous_output["tx_hash"],
@@ -84,6 +95,8 @@ class TestLiveCellOverlay(CkbTest):
 
         # The Accepted output is visible only through the overlay. Omitting data
         # must not change its status or output fields.
+
+        # 3. 查询池内父交易输出，确认覆盖层可见且 with_data 仅影响数据字段。
         parent_with_data = client.get_live_cell_with_include_tx_pool(
             "0x0", parent_hash, with_data=True, include_tx_pool=True
         )
@@ -99,6 +112,7 @@ class TestLiveCellOverlay(CkbTest):
         )
         assert parent_with_data["cell"]["data"]["content"] == "0x01"
 
+        # 4. 用子交易花费父输出，确认该输出在池覆盖层中不再可用。
         child_hash = self.Tx.send_transfer_self_tx_with_input(
             [parent_hash],
             ["0x0"],
@@ -123,6 +137,7 @@ class TestLiveCellOverlay(CkbTest):
         assert spent_pool_without_data["status"] == "unknown"
         assert spent_pool_without_data["cell"] is None
 
+        # 5. 提交子交易上链，核对已提交输出、已花费输入及不存在的输出状态。
         self.Miner.miner_until_tx_committed(self.node, child_hash)
         chain_live = client.get_live_cell_with_include_tx_pool(
             "0x0", child_hash, include_tx_pool=False

@@ -1,9 +1,5 @@
-"""PR #5316: production node configuration remains compatible with old files."""
+"""Production node configuration remains compatible with old files."""
 
-import hashlib
-import json
-import os
-import shutil
 import socket
 import subprocess
 import sys
@@ -14,114 +10,6 @@ from pathlib import Path
 import toml
 
 from framework.basic import CkbTest
-from test_cases.tx_pool_refactor.tests.test_43_pr5316_feature_matrix import _source
-
-
-ROOT = Path(__file__).resolve().parents[3]
-PRODUCTION_DIR = ".ai-test-agent/current/ckb-pr-5316-current/bin-production"
-
-
-def _sha256(path):
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def _fixed_production_binary_dir():
-    """Build only for NTD-02, then reuse the pinned source's production binary."""
-    source = _source()
-    head = subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        cwd=source,
-        capture_output=True,
-        text=True,
-        check=True,
-        timeout=10,
-    ).stdout.strip()
-    directory = ROOT / PRODUCTION_DIR
-    binary = directory / "ckb"
-    metadata_path = directory / "metadata.json"
-    recorded = (
-        json.loads(metadata_path.read_text()) if metadata_path.is_file() else None
-    )
-    if not (
-        binary.is_file()
-        and recorded
-        == {
-            "head": head,
-            "features": "production",
-            "sha256": _sha256(binary),
-        }
-    ):
-        directory.mkdir(parents=True, exist_ok=True)
-        env = os.environ.copy()
-        env.pop("RUSTFLAGS", None)
-        env.update(
-            CARGO_TARGET_DIR=str(
-                ROOT / ".ai-test-agent/current/ckb-pr-5316-current/target-production"
-            ),
-            CARGO_INCREMENTAL="0",
-            CARGO_PROFILE_DEV_DEBUG="0",
-            CARGO_BUILD_JOBS="4",
-            CARGO_NET_OFFLINE="true",
-        )
-        command = [
-            "cargo",
-            "build",
-            "--locked",
-            "--offline",
-            "--package",
-            "ckb",
-            "--bin",
-            "ckb",
-            "--message-format",
-            "short",
-        ]
-        result = subprocess.run(
-            command,
-            cwd=source,
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=1800,
-        )
-        assert result.returncode == 0, (result.stdout + result.stderr)[-4000:]
-        built = Path(env["CARGO_TARGET_DIR"]) / "debug/ckb"
-        assert built.is_file() and os.access(built, os.X_OK), built
-        candidate = directory / "ckb.new"
-        shutil.copy2(built, candidate)
-        candidate.replace(binary)
-        metadata_path.write_text(
-            json.dumps(
-                {
-                    "head": head,
-                    "features": "production",
-                    "sha256": _sha256(binary),
-                },
-                sort_keys=True,
-            )
-        )
-        print(f"fixed production build: exit={result.returncode}")
-
-    cli = ROOT / "source/ckb-cli"
-    assert cli.is_file() and os.access(cli, os.X_OK), cli
-    if not (directory / "ckb-cli").is_file() or _sha256(
-        directory / "ckb-cli"
-    ) != _sha256(cli):
-        shutil.copy2(cli, directory / "ckb-cli")
-    assert _sha256(directory / "ckb-cli") == _sha256(cli)
-    version = subprocess.run(
-        [str(binary), "--version"],
-        capture_output=True,
-        text=True,
-        check=True,
-        timeout=10,
-    ).stdout.strip()
-    assert head[:7] in version, version
-    print(f"fixed production binary: {version}; sha256={_sha256(binary)}")
-    return PRODUCTION_DIR
 
 
 def _unused_port():
@@ -135,17 +23,9 @@ class TestTxPoolConfigCompatibility(CkbTest):
         # Node logs are captured by pytest; avoid the base shared report copy.
         pass
 
-    def _prepared_node(self, name, tx_pool_fields, binary_dir=None):
+    def _prepared_node(self, name, tx_pool_fields):
         rpc_port, p2p_port = _unused_port(), _unused_port()
         base = self.CkbNodeConfigPath.CURRENT_TEST
-        binary_dir = binary_dir or os.environ.get("CKB_PR5316_BIN_DIR")
-        if binary_dir is not None:
-            base = self.CkbNodeConfigPath(
-                base.ckb_config_path,
-                base.ckb_miner_config_path,
-                base.ckb_spec_path,
-                binary_dir,
-            )
         node = self.CkbNode.init_dev_by_port(
             base,
             f"tx_pool/pr5316_config_compat/{name}_{rpc_port}",
@@ -167,8 +47,8 @@ class TestTxPoolConfigCompatibility(CkbTest):
         return node, config
 
     @contextmanager
-    def _running_node(self, name, tx_pool_fields, binary_dir=None):
-        node, config = self._prepared_node(name, tx_pool_fields, binary_dir)
+    def _running_node(self, name, tx_pool_fields):
+        node, config = self._prepared_node(name, tx_pool_fields)
         log_path = Path(node.ckb_dir) / "config-run.log"
         try:
             with log_path.open("w") as log:
@@ -214,12 +94,8 @@ class TestTxPoolConfigCompatibility(CkbTest):
         finally:
             node.clean()
 
-    def _rejected_config(self, field, binary_dir):
-        node, _ = self._prepared_node(
-            f"invalid_{field}",
-            {field: 1},
-            binary_dir,
-        )
+    def _rejected_config(self, field, value=1):
+        node, _ = self._prepared_node(f"invalid_{field}_{value}", {field: value})
         try:
             result = subprocess.run(
                 [node.ckb_bin_path, "run", "--indexer", "--skip-spec-check"],
@@ -232,6 +108,12 @@ class TestTxPoolConfigCompatibility(CkbTest):
             output = result.stdout + result.stderr
             assert result.returncode != 0, f"{field} unexpectedly started node"
             assert f"unknown field `{field}`" in output, output[-1500:]
+            with socket.socket() as sock:
+                sock.settimeout(1)
+                assert (
+                    sock.connect_ex(("127.0.0.1", int(node.rpcUrl.rsplit(":", 1)[1])))
+                    != 0
+                )
             print(f"production rejects {field}: exit={result.returncode}")
         finally:
             node.clean()
@@ -286,6 +168,12 @@ class TestTxPoolConfigCompatibility(CkbTest):
 
     # TEST-MAP: NTD-01
     def test_released_and_obsolete_fields_keep_pool_usable(self):
+        """
+        1. 用已发布字段启动节点，确认交易池可用。
+        2. 加入废弃字段启动节点并提交交易，确认废弃限制不生效。
+        """
+
+        # 1. 用已发布字段启动节点，确认交易池可用。
         released = {
             "max_tx_pool_size": 180_000_000,
             "min_fee_rate": 1_000,
@@ -296,6 +184,8 @@ class TestTxPoolConfigCompatibility(CkbTest):
         with self._running_node("released", released) as (node, config):
             assert "verify_ordering" not in config["tx_pool"]
             assert node.getClient().tx_pool_info()["pending"] == "0x0"
+
+        # 2. 加入废弃字段启动节点并提交交易，确认废弃限制不生效。
         obsolete = {
             **released,
             "max_mem_size": 17,
@@ -338,6 +228,12 @@ class TestTxPoolConfigCompatibility(CkbTest):
 
     # TEST-MAP: NTD-01
     def test_legacy_ancestor_floor_and_explicit_ordering(self):
+        """
+        1. 用旧祖先上限配置构造深链并核对交易仍被接受。
+        2. 用显式排序和较大祖先上限配置启动节点，确认交易池就绪。
+        """
+
+        # 1. 用旧祖先上限配置构造深链并核对交易仍被接受。
         with self._running_node("ancestor_25", {"max_ancestors_count": 25}) as (
             node,
             _,
@@ -367,6 +263,8 @@ class TestTxPoolConfigCompatibility(CkbTest):
             assert int(client.tx_pool_info()["pending"], 16) == 26
             assert parent in client.get_raw_tx_pool(False)["pending"]
             print("legacy ancestors=25: accepted 26-deep uncommitted chain")
+
+        # 2. 用显式排序和较大祖先上限配置启动节点，确认交易池就绪。
         with self._running_node(
             "ancestor_1001",
             {"max_ancestors_count": 1001, "verify_ordering": "fee_rate"},
@@ -376,31 +274,52 @@ class TestTxPoolConfigCompatibility(CkbTest):
         self.did_pass = True
 
     # TEST-MAP: NTD-02
+    # TEST-MAP: VT2-32
+    # TEST-EVIDENCE-BEGIN: VT2-32
+    # Evidence | Case: VT2-32 (covered)
+    # Evidence | Setup: CURRENT_TEST 选择生产构建；普通配置不含内部预算字段。
+    # Evidence | Trigger: 普通配置启动并等tx_pool_info；分别仅写max_tx_verify_time_ms/min_tx_verify_time_ms/cycles_per_ms=1后真实启动。
+    # Evidence | Observe: 默认tip_number=0；每个非法字段进程非零退出且输出精确unknown field；本用例只使用CURRENT_TEST默认二进制。
+    # Evidence | Assert: assert field not in config["tx_pool"]
+    # Evidence | Assert: assert info["tip_number"] == "0x0"
+    # Evidence | Assert: assert result.returncode != 0, f"{field} unexpectedly started node"
+    # Evidence | Assert: assert f"unknown field `{field}`" in output, output[-1500:]
+    # Evidence | Limit: 仅评审冻结 Python 实现；没有将 Rust/native overlay 或历史进程退出码计为本 Case 的冻结后通过。
+    # Evidence | Limit: 非法项通过解析错误与已退出进程证明未就绪，未另probe socket；其启动timeout10秒，默认readiness20秒且单次RPC timeout1秒。
+    # TEST-EVIDENCE-END: VT2-32
     def test_production_rejects_test_only_budget_fields(self):
-        binary_dir = _fixed_production_binary_dir()
-        with self._running_node(
-            "production_defaults",
-            {},
-            binary_dir,
-        ) as (_, config):
+        """
+        1. 以生产二进制的默认配置启动并确认预算字段不存在。
+        2. 逐一加入测试专用预算字段，核对生产配置拒绝。
+        """
+
+        # 1. 以生产二进制的默认配置启动并确认预算字段不存在。
+        with self._running_node("production_defaults", {}) as (_, config):
             for field in (
                 "max_tx_verify_time_ms",
                 "min_tx_verify_time_ms",
                 "cycles_per_ms",
             ):
                 assert field not in config["tx_pool"]
+
+        # 2. 逐一加入测试专用预算字段，核对生产配置拒绝。
         for field in (
             "max_tx_verify_time_ms",
             "min_tx_verify_time_ms",
             "cycles_per_ms",
         ):
-            self._rejected_config(field, binary_dir)
+            self._rejected_config(field)
         self.did_pass = True
 
     # TEST-MAP: NTD-03
     def test_oversized_worker_slots_fail_cleanly(self):
         # TOML integer values stop at signed 64-bit; this is the largest
         # configuration-reachable worker count, not an internal usize::MAX fixture.
+        """
+        1. 以可配置的最大工作槽值启动，核对资源边界错误。
+        """
+
+        # 1. 以可配置的最大工作槽值启动，核对资源边界错误。
         self._rejected_bound(
             "worker_slots_overflow",
             {"max_tx_verify_workers": sys.maxsize},
@@ -410,6 +329,11 @@ class TestTxPoolConfigCompatibility(CkbTest):
 
     # TEST-MAP: NTD-03
     def test_oversized_residency_fails_cleanly(self):
+        """
+        1. 以超大池容量启动，核对驻留边界错误。
+        """
+
+        # 1. 以超大池容量启动，核对驻留边界错误。
         self._rejected_bound(
             "residency_overflow",
             {"max_tx_pool_size": sys.maxsize},
@@ -419,6 +343,11 @@ class TestTxPoolConfigCompatibility(CkbTest):
 
     # TEST-MAP: NTD-03
     def test_explicit_zero_workers_still_starts_pool(self):
+        """
+        1. 显式配置零工作线程启动节点，核对交易池就绪。
+        """
+
+        # 1. 显式配置零工作线程启动节点，核对交易池就绪。
         with self._running_node(
             "workers_zero",
             {"max_tx_verify_workers": 0},
@@ -435,4 +364,42 @@ class TestTxPoolConfigCompatibility(CkbTest):
                 is True
             )
             print("workers_zero: configured=0, tx_pool_ready=true")
+        self.did_pass = True
+
+    # TEST-MAP: VT2-33
+    # TEST-EVIDENCE-BEGIN: VT2-33
+    # Evidence | Case: VT2-33 (covered)
+    # Evidence | Setup: 每项使用CURRENT_TEST默认二进制、独立节点/端口/配置。
+    # Evidence | Trigger: 缺省配置启动；逐一写入旧预算字段的各个值并尝试启动。
+    # Evidence | Observe: 缺省池就绪；每个旧字段均报unknown field、非零退出且RPC未开放。
+    # Evidence | Assert: assert node.getClient().tx_pool_info()["pending"] == "0x0"
+    # Evidence | Assert: assert result.returncode != 0, output
+    # Evidence | Assert: assert f"unknown field `{field}`" in output, output
+    # Evidence | Assert: assert sock.connect_ex(("127.0.0.1", int(node.rpcUrl.rsplit(":", 1)[1]))) != 0
+    # Evidence | Assert: assert info["tip_number"] == "0x0"
+    # Evidence | Assert: assert result.returncode != 0, f"{field} unexpectedly started node"
+    # Evidence | Assert: assert f"unknown field `{field}`" in output, output[-1500:]
+    # Evidence | Limit: 仅评审冻结 Python 实现；没有将 Rust/native overlay 或历史进程退出码计为本 Case 的冻结后通过。
+    # Evidence | Limit: 共享 CkbNode.start/stop 使用固定 sleep 和按 RPC 端口发送 SIGTERM，未等待并断言旧 PID 退出；外层 run_selected.py 有900秒进程组watchdog，但普通RPC默认没有单次requests timeout。
+    # Evidence | Limit: 本例检查默认二进制的配置兼容；CPU超时由真实交易用例检查。
+    # TEST-EVIDENCE-END: VT2-33
+    def test_budget_configuration_bounds(self):
+        """
+        1. 使用默认预算配置启动节点，确认交易池可用。
+        2. 对旧预算字段的各个值确认配置拒绝且 RPC 未开放。
+        3. 对另外两个内部预算字段确认配置拒绝。
+        """
+
+        # 1. 使用默认预算配置启动节点，确认交易池可用。
+        with self._running_node("default_budget", {}) as (node, config):
+            assert "max_tx_verify_time_ms" not in config["tx_pool"]
+            assert node.getClient().tx_pool_info()["pending"] == "0x0"
+
+        # 2. 对旧预算字段的各个值确认配置拒绝且 RPC 未开放。
+        for value in (1, 12_000, 0, -1, 4_294_967_296):
+            self._rejected_config("max_tx_verify_time_ms", value)
+
+        # 3. 对未开放的预算字段确认配置拒绝。
+        for field in ("min_tx_verify_time_ms", "cycles_per_ms"):
+            self._rejected_config(field)
         self.did_pass = True

@@ -69,6 +69,15 @@ class TestChainConflict(CkbTest):
 
     # TEST-MAP: NTD-19
     def test_attached_spend_evicts_input_and_dep_readers_with_descendants(self):
+        """
+        1. 准备两个节点共享的已上链输入。
+        2. 构造输入消费者、依赖读取者、各自后代及无关交易。
+        3. 在竞争链上花费冲突输入并同步较长链。
+        4. 确认冲突分支被逐出且无关交易保留。
+        5. 再验证已上链父交易的有效池内子交易不会被误删。
+        """
+
+        # 1. 准备两个节点共享的已上链输入。
         client = self.node.getClient()
         account = self.Ckb_cli.util_key_info_by_private_key(
             self.Config.ACCOUNT_PRIVATE_2
@@ -92,6 +101,7 @@ class TestChainConflict(CkbTest):
         self.Miner.miner_until_tx_committed(self.node, split_hash)
         self._sync_common_chain()  # Both nodes share the committed cells, then diverge.
 
+        # 2. 构造输入消费者、依赖读取者、各自后代及无关交易。
         input_consumer = self.Tx.send_transfer_self_tx_with_input(
             [split_hash],
             ["0x0"],
@@ -131,6 +141,7 @@ class TestChainConflict(CkbTest):
         invalidated = {input_consumer, input_child, dep_reader, dep_child}
         assert invalidated | {unrelated} <= self._pool_hashes()
 
+        # 3. 在竞争链上花费冲突输入并同步较长链。
         peer_client = self.peer.getClient()
         attached_spend = self.Tx.send_transfer_self_tx_with_input(
             [split_hash, split_hash],
@@ -166,6 +177,7 @@ class TestChainConflict(CkbTest):
                 f"invalidated_in_pool={invalidated & pool}, unrelated_in_pool={unrelated in pool}"
             )
 
+        # 4. 确认冲突分支被逐出且无关交易保留。
         assert (
             client.get_transaction(attached_spend)["tx_status"]["status"] == "committed"
         )
@@ -179,6 +191,8 @@ class TestChainConflict(CkbTest):
         # Separate branch: an Accepted transaction itself enters the chain.
         # Its child is submitted only after the parent reaches Proposed, so
         # the next block can commit the parent while the child remains in pool.
+
+        # 5. 再验证已上链父交易的有效池内子交易不会被误删。
         attached_parent = self.Tx.send_transfer_self_tx_with_input(
             [split_hash],
             ["0x2"],
@@ -251,6 +265,16 @@ class TestWaitingChainConflict(CkbTest):
     # TEST-MAP: NTD-45
     # TEST-MAP: NTD-46
     def test_attached_spend_removes_waiter_with_other_missing_input(self):
+        """
+        1. 准备共享链及含两个待解析来源的等待交易。
+        2. 移除父交易并通过通知入口让交易进入等待状态。
+        3. 提交对照区块，确认等待交易仍未被接受。
+        4. 连接包含冲突花费的较长链。
+        5. 核对等待交易因已花费输入被拒且池统计保持一致。
+        6. 重新提交非冲突父交易，确认不会错误唤醒该等待交易。
+        """
+
+        # 1. 准备共享链及含两个待解析来源的等待交易。
         client = self.node.getClient()
         peer_client = self.peer.getClient()
         key = self.Config.ACCOUNT_PRIVATE_2
@@ -286,6 +310,7 @@ class TestWaitingChainConflict(CkbTest):
             peer_client.submit_block("0x0", block)
         assert peer_client.get_tip_header()["hash"] == client.get_tip_header()["hash"]
 
+        # 2. 移除父交易并通过通知入口让交易进入等待状态。
         parent_tx = self.Tx.build_send_transfer_self_tx_with_input(
             [split],
             ["0x0"],
@@ -350,6 +375,8 @@ class TestWaitingChainConflict(CkbTest):
 
         # An unrelated attached block must leave the same missing-A waiter in
         # Waiting. This separates a B-spend rejection from generic tip churn.
+
+        # 3. 提交对照区块，确认等待交易仍未被接受。
         self.Miner.miner_with_version(self.peer, "0x0")
         control_tip = peer_client.get_tip_header()["hash"]
         control_block = peer_client.get_block(control_tip)
@@ -368,6 +395,7 @@ class TestWaitingChainConflict(CkbTest):
         else:
             raise AssertionError("unrelated block changed the Waiting owner")
 
+        # 4. 连接包含冲突花费的较长链。
         attached_spend = self.Tx.send_transfer_self_tx_with_input(
             [split],
             ["0x1"],
@@ -399,6 +427,8 @@ class TestWaitingChainConflict(CkbTest):
             time.sleep(0.5)
         else:
             raise AssertionError("attached spend did not retire the Waiting owner")
+
+        # 5. 核对等待交易因已花费输入被拒且池统计保持一致。
         assert (
             client.get_transaction(attached_spend)["tx_status"]["status"] == "committed"
         )
@@ -415,6 +445,8 @@ class TestWaitingChainConflict(CkbTest):
 
         # Making A available later cannot revive a waiter whose B input was
         # already spent in the attached block.
+
+        # 6. 重新提交非冲突父交易，确认不会错误唤醒该等待交易。
         assert client.send_transaction(parent_tx) == parent
         assert parent in self._accepted_hashes()
         for _ in range(10):
@@ -462,6 +494,14 @@ class TestWaitingWakePagination(CkbTest):
 
     # TEST-MAP: NTD-16
     def test_shared_trigger_wakes_waiters_across_page_boundary(self):
+        """
+        1. 准备多输出资金及所有等待交易共用的父依赖。
+        2. 移除父交易并通知超过单页数量的等待交易。
+        3. 确认所有等待交易处于孤儿状态且未进入已接受池。
+        4. 重新提交父交易，确认跨页等待交易全部被唤醒并可查询。
+        """
+
+        # 1. 准备多输出资金及所有等待交易共用的父依赖。
         client = self.node.getClient()
         key = self.Config.ACCOUNT_PRIVATE_2
         account = self.Ckb_cli.util_key_info_by_private_key(key)
@@ -521,6 +561,7 @@ class TestWaitingWakePagination(CkbTest):
                 } in tx["cell_deps"]
                 waiters.append(tx)
 
+        # 2. 移除父交易并通知超过单页数量的等待交易。
         assert client.remove_transaction(parent) is True
         hashes = [
             client.call("notify_transaction", [tx], verbose=False) for tx in waiters
@@ -535,9 +576,12 @@ class TestWaitingWakePagination(CkbTest):
             raise AssertionError(
                 "33 shared-trigger transactions did not all reach Waiting"
             )
+
+        # 3. 确认所有等待交易处于孤儿状态且未进入已接受池。
         raw = client.get_raw_tx_pool(False)
         assert set(hashes).isdisjoint(set(raw["pending"]) | set(raw["proposed"]))
 
+        # 4. 重新提交父交易，确认跨页等待交易全部被唤醒并可查询。
         assert client.send_transaction(parent_tx) == parent
         deadline = time.monotonic() + 90
         while time.monotonic() < deadline:

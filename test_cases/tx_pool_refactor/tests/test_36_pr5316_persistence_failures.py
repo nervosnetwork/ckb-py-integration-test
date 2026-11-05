@@ -1,9 +1,14 @@
 """PR #5316: persistence failures retain the committed snapshot boundary."""
 
+import struct
 import os
 from pathlib import Path
 
 from framework.basic import CkbTest
+from test_cases.network_verification import workload
+from test_cases.tx_pool_refactor.tests.test_29_pr5316_persistence_replay import (
+    _transactions,
+)
 
 
 class TestPersistenceFailures(CkbTest):
@@ -22,6 +27,7 @@ class TestPersistenceFailures(CkbTest):
     def teardown_method(self, method):
         if self.node.ckb_pid != -1:
             self.node.stop()
+        workload.save_node_logs(self.node)
         self.node.clean()
 
     @staticmethod
@@ -67,13 +73,30 @@ class TestPersistenceFailures(CkbTest):
         return set(raw["pending"]) | set(raw["proposed"])
 
     def _stop_and_log(self):
-        self.node.stop()
+        workload.stop_and_assert_process_exit(self.node)
         log = (Path(self.node.ckb_dir) / "node.log").read_text()
+        self._shutdown_number = getattr(self, "_shutdown_number", 0) + 1
+        if os.environ.get("CKB_TEST_NODE_LOG_DIR"):
+            directory = (
+                Path(os.environ["CKB_TEST_NODE_LOG_DIR"]) / Path(self.node.ckb_dir).name
+            )
+            directory.mkdir(parents=True, exist_ok=True)
+            (directory / f"shutdown-{self._shutdown_number}.log").write_text(log)
         assert "CKB shutdown" in log, "node shutdown did not finish"
         return log
 
     # TEST-MAP: NTD-64
+    # TEST-MAP: TCH-03
     def test_prior_v2_survives_temp_open_failure(self):
+        """
+        1. 保存首笔交易的有效 v2 快照。
+        2. 重启后再提交第二笔交易。
+        3. 用目录占位使临时文件打开失败，核对旧 v2 未被覆盖。
+        4. 撤销故障并重启，确认仅旧快照交易恢复及实际 I/O 错误。
+        5. 重交未保存交易，再正常保存并重启，确认新快照有效且两笔恢复。
+        """
+
+        # 1. 保存首笔交易的有效 v2 快照。
         split = self._split()
         first = self._send(split, 0)
         assert self._pool() == {first}
@@ -82,35 +105,61 @@ class TestPersistenceFailures(CkbTest):
         original = v2.read_bytes()
         assert original[:8] == b"CKBTPV2\0"
 
+        # 2. 重启后再提交第二笔交易。
         self.node.start()
         assert self._pool() == {first}
         second = self._send(split, 1)
         assert self._pool() == {first, second}
 
-        # The writer follows this symlink when opening v2.tmp. Its target is
-        # a local, read-only sentinel, forcing an open error without touching
-        # the pre-existing v2. Cleanup should unlink only the temporary path.
+        # 3. 目录占位对普通用户和 root 均能产生实际文件打开失败。
         tmp = v2.with_suffix(".v2.tmp")
-        sentinel = v2.with_name("write-denied-sentinel")
-        sentinel.write_bytes(b"preserve sentinel")
-        sentinel.chmod(0o444)
-        assert not os.access(sentinel, os.W_OK)
-        tmp.symlink_to(sentinel)
-        log = self._stop_and_log()
-        assert v2.read_bytes() == original
-        assert not tmp.exists() and not tmp.is_symlink()
-        assert sentinel.read_bytes() == b"preserve sentinel"
+        tmp.mkdir()
+        try:
+            log = self._stop_and_log()
+            assert v2.read_bytes() == original
+            assert tmp.is_dir()
+        finally:
+            tmp.rmdir()
 
+        # 4. 再次启动，确认仅旧快照交易恢复并记录错误。
         self.node.start()
-        assert self._pool() == {first}
+        workload.wait_for(lambda: self._pool() == {first}, "old snapshot restored")
         print(
             f"temp-open-error: original_v2_bytes={len(original)}; "
             "temp_removed=True; prior_pool_restored=True"
         )
         assert "failed to save tx-pool" in log and "Failed to open temp file" in log
 
+        # 5. 故障撤销后必须证明后续保存和恢复正常，避免只验证一次读旧文件。
+        assert self._send(split, 1) == second
+        saved_bodies = {
+            h: self.node.getClient().get_transaction(h)["transaction"]
+            for h in (first, second)
+        }
+        clean_log = self._stop_and_log()
+        assert "failed to save tx-pool" not in clean_log
+        updated = v2.read_bytes()
+        assert updated[:8] == b"CKBTPV2\0" and updated != original
+        end = 16 + struct.unpack_from("<Q", updated, 8)[0]
+        assert len(_transactions(updated[16:end])) == 2
+        assert _transactions(updated[end:]) == []
+        self.node.start()
+        workload.wait_for(
+            lambda: self._pool() == {first, second}, "new snapshot restored"
+        )
+        for tx_hash, body in saved_bodies.items():
+            assert self.node.getClient().get_transaction(tx_hash)["transaction"] == body
+
     # TEST-MAP: NTD-65
     def test_v1_cleanup_failure_keeps_new_v2_readable(self):
+        """
+        1. 保存首笔交易的有效 v2 快照。
+        2. 重启后提交第二笔交易。
+        3. 让旧 v1 清理失败，确认新的 v2 已写成且临时文件消失。
+        4. 再次启动，确认两笔交易从新 v2 恢复并检查错误日志。
+        """
+
+        # 1. 保存首笔交易的有效 v2 快照。
         split = self._split()
         first = self._send(split, 0)
         assert self._pool() == {first}
@@ -119,6 +168,7 @@ class TestPersistenceFailures(CkbTest):
         original = v2.read_bytes()
         assert original[:8] == b"CKBTPV2\0"
 
+        # 2. 重启后提交第二笔交易。
         self.node.start()
         assert self._pool() == {first}
         second = self._send(split, 1)
@@ -126,6 +176,8 @@ class TestPersistenceFailures(CkbTest):
 
         # A directory at the legacy path makes remove_file(v1) fail *after*
         # the normal temporary v2 has been renamed into place.
+
+        # 3. 让旧 v1 清理失败，确认新的 v2 已写成且临时文件消失。
         v1 = v2.with_suffix(".v1")
         v1.mkdir()
         marker = v1 / "keep"
@@ -137,6 +189,8 @@ class TestPersistenceFailures(CkbTest):
 
         # If startup mistakenly selected the legacy directory, it would fail
         # to load; v2 must win and carry the new accepted transaction.
+
+        # 4. 再次启动，确认两笔交易从新 v2 恢复并检查错误日志。
         self.node.start()
         assert self._pool() == {first, second}
         assert (

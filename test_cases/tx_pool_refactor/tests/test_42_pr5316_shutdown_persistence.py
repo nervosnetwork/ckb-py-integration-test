@@ -21,6 +21,15 @@ class TestShutdownPersistence(CkbTest):
 
     # TEST-MAP: NTD-67
     def test_stop_with_pending_notify_saves_accepted_transaction(self):
+        """
+        1. 启动阻塞模板通知服务并准备持久化基线。
+        2. 配置通知服务并启动节点，保持通知请求未完成。
+        3. 在通知阻塞期间提交交易并确认已入池。
+        4. 停止节点，确认通知解除且新快照保存交易。
+        5. 重启节点，核对持久化交易重新入池。
+        """
+
+        # 1. 启动阻塞模板通知服务并准备持久化基线。
         server = _HoldingServer()
         server_thread = threading.Thread(target=server.serve_forever, daemon=True)
         server_thread.start()
@@ -60,6 +69,7 @@ class TestShutdownPersistence(CkbTest):
             before = snapshot.read_bytes()
             assert before.startswith(b"CKBTPV2\0")
 
+            # 2. 配置通知服务并启动节点，保持通知请求未完成。
             config_path = Path(node.ckb_toml_path)
             config = toml.loads(config_path.read_text())
             config["block_assembler"]["notify"] = [
@@ -93,6 +103,7 @@ class TestShutdownPersistence(CkbTest):
             client.get_block_template()
             _wait_for("held template notification", lambda: server.snapshot()[1] == 1)
 
+            # 3. 在通知阻塞期间提交交易并确认已入池。
             retained = self.Tx.send_transfer_self_tx_with_input(
                 [fund],
                 ["0x0"],
@@ -106,6 +117,7 @@ class TestShutdownPersistence(CkbTest):
             assert int(info["pending"], 16) + int(info["proposed"], 16) >= 1
             assert server.snapshot()[1] == 1
 
+            # 4. 停止节点，确认通知解除且新快照保存交易。
             process.terminate()
             # The service has two separate shutdown budgets; this bound is
             # deliberately not a claim that the whole stop fits in 30s.
@@ -123,6 +135,7 @@ class TestShutdownPersistence(CkbTest):
                 in (Path(node.ckb_dir) / "shutdown-notify.log").read_text()
             )
 
+            # 5. 重启节点，核对持久化交易重新入池。
             server.release.set()
             node.start()
             restarted = True

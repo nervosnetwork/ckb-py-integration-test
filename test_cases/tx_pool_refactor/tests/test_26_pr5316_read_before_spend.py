@@ -30,6 +30,14 @@ class TestReadBeforeSpend(CkbTest):
 
     # TEST-MAP: NTD-28
     def test_reader_and_its_parent_precede_spender_in_valid_block(self):
+        """
+        1. 准备资金并构造父交易、依赖读取者与花费者。
+        2. 核对交易池中的依赖关系和祖先数量。
+        3. 推进提案窗口并重复读取模板，检查读取者先于花费者。
+        4. 提交区块，确认交易上链且后续模板不再包含它们。
+        """
+
+        # 1. 准备资金并构造父交易、依赖读取者与花费者。
         client = self.node.getClient()
         private_key = self.Config.ACCOUNT_PRIVATE_2
         account = self.Ckb_cli.util_key_info_by_private_key(private_key)
@@ -75,6 +83,8 @@ class TestReadBeforeSpend(CkbTest):
             fee=100_000,
             api_url=client.url,
         )
+
+        # 2. 核对交易池中的依赖关系和祖先数量。
         expected = {parent, reader, spender}
         raw = client.get_raw_tx_pool(True)
         entries = {**raw["pending"], **raw["proposed"]}
@@ -82,6 +92,7 @@ class TestReadBeforeSpend(CkbTest):
         assert int(entries[reader]["ancestors_count"], 16) == 2
         assert int(entries[spender]["ancestors_count"], 16) == 1
 
+        # 3. 推进提案窗口并重复读取模板，检查读取者先于花费者。
         short_ids = {tx_hash[:22] for tx_hash in expected}
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
@@ -107,6 +118,7 @@ class TestReadBeforeSpend(CkbTest):
                 < selected.index(spender)
             )
 
+        # 4. 提交区块，确认交易上链且后续模板不再包含它们。
         block = self.Miner.block_template_transfer_to_submit_block(
             copy.deepcopy(template)
         )
@@ -121,6 +133,15 @@ class TestReadBeforeSpend(CkbTest):
 
     # TEST-MAP: NTD-32
     def test_same_count_rbf_and_phase_change_match_cold_graph_pack(self):
+        """
+        1. 构造两笔同数量的池内交易并取得初始提案。
+        2. 用提高手续费的交易替换其中一笔，确认池数量不变。
+        3. 经历 Pending、Gap、Proposed 阶段并核对热图打包结果。
+        4. 用新节点的冷图结果对照，确认打包选择一致。
+        5. 提交原节点模板，核对最终上链顺序。
+        """
+
+        # 1. 构造两笔同数量的池内交易并取得初始提案。
         client = self.node.getClient()
         client.clear_tx_pool()
         key = self.Config.ACCOUNT_PRIVATE_2
@@ -173,6 +194,7 @@ class TestReadBeforeSpend(CkbTest):
         old_count = len(client.get_raw_tx_pool(False)["pending"])
         assert old_count == 2
 
+        # 2. 用提高手续费的交易替换其中一笔，确认池数量不变。
         replacement_fee = max(
             int(client.get_transaction(second)["min_replace_fee"], 16) + 1000,
             2_000_000,
@@ -218,6 +240,8 @@ class TestReadBeforeSpend(CkbTest):
 
         # Same owner pair crosses Pending -> Gap -> Proposed while the graph's
         # causal population remains unchanged. Pack must use current phase.
+
+        # 3. 经历 Pending、Gap、Proposed 阶段并核对热图打包结果。
         for proposal_ids in (sorted(current_ids), []):
             template = client.get_block_template()
             template["transactions"] = []
@@ -248,6 +272,8 @@ class TestReadBeforeSpend(CkbTest):
 
         # A fresh second node sees the identical chain and signed transactions
         # but has never compiled the warm node's graph cache.
+
+        # 4. 用新节点的冷图结果对照，确认打包选择一致。
         peer = self.CkbNode.init_dev_by_port(
             self.CkbNodeConfigPath.CURRENT_TEST,
             "tx_pool/pr5316_read_before_spend/cold_peer",
@@ -297,6 +323,7 @@ class TestReadBeforeSpend(CkbTest):
             peer.stop()
             peer.clean()
 
+        # 5. 提交原节点模板，核对最终上链顺序。
         block = self.Miner.block_template_transfer_to_submit_block(
             copy.deepcopy(warm_template)
         )

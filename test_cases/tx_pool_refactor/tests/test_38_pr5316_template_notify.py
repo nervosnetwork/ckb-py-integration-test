@@ -120,6 +120,15 @@ class TestTemplateNotifyLifecycle(CkbTest):
 
     # TEST-MAP: NTD-60
     def test_timeout_and_shutdown_release_bounded_notifications(self):
+        """
+        1. 启动阻塞通知服务并准备节点的 HTTP 与脚本通知。
+        2. 取得首个模板，确认首批通知与模板字段一致。
+        3. 连续更新链顶，确认阻塞期间通知并发数受限。
+        4. 等待超时释放通知，再核对最新模板通知。
+        5. 关闭节点，确认脚本及 HTTP 请求被取消并完成清理。
+        """
+
+        # 1. 启动阻塞通知服务并准备节点的 HTTP 与脚本通知。
         server = _HoldingServer()
         server_thread = threading.Thread(target=server.serve_forever, daemon=True)
         server_thread.start()
@@ -184,6 +193,8 @@ class TestTemplateNotifyLifecycle(CkbTest):
 
             _wait_for("CKB RPC", ready)
             client = node.getClient()
+
+            # 2. 取得首个模板，确认首批通知与模板字段一致。
             first_template = client.get_block_template()
             _wait_for("first HTTP notify", lambda: server.snapshot()[0])
             first_pid = _wait_for(
@@ -198,6 +209,8 @@ class TestTemplateNotifyLifecycle(CkbTest):
 
             # Multiple changed-tip publications must not create another batch
             # while the first HTTP/script pair still holds the notification lane.
+
+            # 3. 连续更新链顶，确认阻塞期间通知并发数受限。
             started = time.monotonic()
             for _ in range(3):
                 self.Miner.miner_with_version(node, "0x0")
@@ -208,6 +221,7 @@ class TestTemplateNotifyLifecycle(CkbTest):
             assert len(records) == 1 and active == 1 and maximum == 1
             assert _child_pids(child_log) == [first_pid]
 
+            # 4. 等待超时释放通知，再核对最新模板通知。
             _wait_for(
                 "timed-out script exit",
                 lambda: not _child_alive(first_pid, script),
@@ -241,6 +255,7 @@ class TestTemplateNotifyLifecycle(CkbTest):
             assert _child_records(child_log)[1]["number"] == current_number
             assert server.snapshot()[1] == 1  # HTTP request still in flight.
 
+            # 5. 关闭节点，确认脚本及 HTTP 请求被取消并完成清理。
             process.terminate()
             process.wait(timeout=40)
             _wait_for(

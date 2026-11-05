@@ -1,19 +1,13 @@
 """PR #5316: a successful script proof cannot waive fresh since checks."""
 
 import json
-import shutil
-import subprocess
 import tempfile
 from pathlib import Path
 
 import pytest
 
 from framework.basic import CkbTest
-from test_cases.tx_pool_refactor.tests.test_45_pr5316_time_budget_retry import (
-    _fixed_test_binary,
-    _sha256,
-    _two_ports,
-)
+from test_cases.network_verification.workload import unused_ports
 
 
 class TestCachedContext(CkbTest):
@@ -57,18 +51,46 @@ class TestCachedContext(CkbTest):
             return tx
 
     # TEST-MAP: NTD-40
+    # TEST-MAP: VT2-52
+    # TEST-EVIDENCE-BEGIN: VT2-52
+    # Evidence | Case: VT2-52 (covered)
+    # Evidence | Setup: CURRENT_TEST 默认二进制；确认split输入，low_height/hash；在high=low+6构造since=high签名tx，先入池获得cycles。
+    # Evidence | Trigger: remove_transaction后truncate到low；同tx经两个RPC均应Immature；再挖到high、preview/submit同tx。
+    # Evidence | Observe: 低高度pool空，两个RPC匹配Immature；成熟后cycles等原值，返回同hash并进入pending/proposed。
+    # Evidence | Assert: assert client.get_block_hash(hex(low_height)) == low_hash
+    # Evidence | Assert: assert client.get_tip_block_number() == high_height
+    # Evidence | Assert: assert high_cycles > 0
+    # Evidence | Assert: assert client.get_transaction(accepted_hash)["tx_status"]["status"] in {
+    # Evidence |                 "pending", "proposed",
+    # Evidence |             }
+    # Evidence | Assert: assert client.remove_transaction(accepted_hash) is True
+    # Evidence | Assert: assert client.get_raw_tx_pool(False) == {"pending": [], "proposed": []}
+    # Evidence | Assert: assert client.get_tip_block_number() == low_height
+    # Evidence | Assert: assert client.get_transaction(split)["tx_status"]["block_hash"] == low_hash
+    # Evidence | Assert: assert client.get_raw_tx_pool(False) == {"pending": [], "proposed": []}
+    # Evidence | Assert: assert client.get_tip_block_number() == high_height
+    # Evidence | Assert: assert int(preview["cycles"], 16) == high_cycles
+    # Evidence | Assert: assert client.send_transaction(tx) == accepted_hash
+    # Evidence | Assert: assert accepted_hash in set(client.get_raw_tx_pool(False)["pending"]) | set(
+    # Evidence |                 client.get_raw_tx_pool(False)["proposed"]
+    # Evidence |             )
+    # Evidence | Assert: with pytest.raises(Exception, match="Immature"):
+    # Evidence |                 client.test_tx_pool_accept(tx, "passthrough")
+    # Evidence | Assert: with pytest.raises(Exception, match="Immature"):
+    # Evidence |                 client.send_transaction(tx)
+    # Evidence | Limit: 仅评审冻结 Python 实现；没有将 Rust/native overlay 或历史进程退出码计为本 Case 的冻结后通过。
+    # Evidence | Limit: 公开since回归，不证明内部缓存命中次数；未用remove_transaction声称清空成功缓存。
+    # TEST-EVIDENCE-END: VT2-52
     def test_cached_script_proof_does_not_skip_since_after_truncate(self):
-        binary = _fixed_test_binary(None)
-        version = subprocess.run(
-            [str(binary), "--version"],
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout.strip()
-        assert "60b8e34" in version, version
-        print(f"fixed test binary: {version}; sha256={_sha256(binary)}")
+        """
+        1. 准备节点和带绝对 since 条件的交易。
+        2. 在较高链顶提交交易并记录验证周期。
+        3. 回退链顶，用相同交易核对 Immature 拒绝和空池。
+        4. 重新推进链顶，确认原交易可再次接受且周期一致。
+        """
 
-        rpc_port, p2p_port = _two_ports()
+        # 1. 准备节点和带绝对 since 条件的交易。
+        rpc_port, p2p_port = unused_ports(2)
         node = self.CkbNode.init_dev_by_port(
             self.CkbNodeConfigPath.CURRENT_TEST,
             f"tx_pool/pr5316_cached_context/{rpc_port}",
@@ -76,7 +98,6 @@ class TestCachedContext(CkbTest):
             p2p_port,
         )
         node.prepare()
-        shutil.copy2(binary, node.ckb_bin_path)
         started = False
         try:
             node.start()
@@ -112,6 +133,8 @@ class TestCachedContext(CkbTest):
             high_height = low_height + 6
             self.Miner.make_tip_height_number(node, high_height)
             assert client.get_tip_block_number() == high_height
+
+            # 2. 在较高链顶提交交易并记录验证周期。
             tx = self._since_transaction(client, split, key, high_height)
             accepted_hash = client.send_transaction(tx)
             high_entry = client.get_raw_tx_pool(True)["pending"][accepted_hash]
@@ -126,6 +149,8 @@ class TestCachedContext(CkbTest):
 
             # The same raw transaction and input outpoint retain the semantic
             # script key; only the tip-dependent absolute since result changes.
+
+            # 3. 回退链顶，用相同交易核对 Immature 拒绝和空池。
             client.truncate(low_hash)
             assert client.get_tip_block_number() == low_height
             assert client.get_transaction(split)["tx_status"]["block_hash"] == low_hash
@@ -135,6 +160,7 @@ class TestCachedContext(CkbTest):
                 client.send_transaction(tx)
             assert client.get_raw_tx_pool(False) == {"pending": [], "proposed": []}
 
+            # 4. 重新推进链顶，确认原交易可再次接受且周期一致。
             self.Miner.make_tip_height_number(node, high_height)
             assert client.get_tip_block_number() == high_height
             preview = client.test_tx_pool_accept(tx, "passthrough")

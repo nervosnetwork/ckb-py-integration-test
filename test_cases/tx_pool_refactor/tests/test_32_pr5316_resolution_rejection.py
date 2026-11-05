@@ -51,6 +51,15 @@ class TestResolutionRejection(CkbTest):
     # TEST-MAP: NTD-13
     # TEST-MAP: NTD-15
     def test_unknown_input_does_not_mask_invalid_dep_group_or_header(self):
+        """
+        1. 准备已上链输入与有效交易基准。
+        2. 分别构造未知输入和越界输入，核对拒绝与池状态。
+        3. 叠加无效依赖组和区块头，核对错误不会被未知输入遮蔽。
+        4. 提交有效基准并构造空依赖组，核对无效组拒绝。
+        5. 用有效区块头对照未知输入，并构造可验证的有效头依赖交易。
+        """
+
+        # 1. 准备已上链输入与有效交易基准。
         client = self.node.getClient()
         key = self.Config.ACCOUNT_PRIVATE_2
         account = self.Ckb_cli.util_key_info_by_private_key(key)
@@ -72,6 +81,7 @@ class TestResolutionRejection(CkbTest):
         assert client.get_transaction(fund)["tx_status"]["status"] == "committed"
         assert client.get_live_cell("0x0", fund)["status"] == "live"
 
+        # 2. 分别构造未知输入和越界输入，核对拒绝与池状态。
         unknown_input = copy.deepcopy(base)
         unknown_input["inputs"][0]["previous_output"]["tx_hash"] = "0x" + "00" * 32
         self._assert_rejected_without_pool_owner(unknown_input, "unknown", "00" * 32)
@@ -81,6 +91,7 @@ class TestResolutionRejection(CkbTest):
         out_of_range["inputs"][0]["previous_output"]["index"] = hex(len(outputs))
         self._assert_rejected_without_pool_owner(out_of_range, "unknown", fund[2:])
 
+        # 3. 叠加无效依赖组和区块头，核对错误不会被未知输入遮蔽。
         invalid_dep_group = copy.deepcopy(unknown_input)
         invalid_dep_group["cell_deps"].append(
             {
@@ -102,6 +113,7 @@ class TestResolutionRejection(CkbTest):
             "ff" * 32,
         )
 
+        # 4. 提交有效基准并构造空依赖组，核对无效组拒绝。
         accepted = client.send_transaction(base)
         assert client.get_transaction(accepted)["transaction"]["hash"] == accepted
         pool = client.get_raw_tx_pool(False)
@@ -139,6 +151,8 @@ class TestResolutionRejection(CkbTest):
 
         # The same unknown input with an actual canonical header is Unknown,
         # not InvalidHeader: only an invalid header masks it.
+
+        # 5. 用有效区块头对照未知输入，并构造可验证的有效头依赖交易。
         canonical_hash = client.get_tip_header()["hash"]
         valid_header = copy.deepcopy(unknown_input)
         valid_header["header_deps"].append(canonical_hash)
@@ -209,6 +223,13 @@ class TestResolutionRejection(CkbTest):
 
     # TEST-MAP: NTD-14
     def test_missing_input_and_expanded_dep_group_member_wait_for_both(self):
+        """
+        1. 准备输入父交易、依赖组成员及已上链的组容器。
+        2. 在两个生产者均存在时签署等待交易，再构造双缺失状态。
+        3. 交替补齐两个来源，确认只在两者都满足时进入已接受池。
+        """
+
+        # 1. 准备输入父交易、依赖组成员及已上链的组容器。
         client = self.node.getClient()
         key = self.Config.ACCOUNT_PRIVATE_2
         account = self.Ckb_cli.util_key_info_by_private_key(key)
@@ -273,6 +294,8 @@ class TestResolutionRejection(CkbTest):
 
         # Sign while both producers exist, then remove them before proposal
         # admission; local send_transaction rejects Unknown dependencies.
+
+        # 2. 在两个生产者均存在时签署等待交易，再构造双缺失状态。
         with tempfile.TemporaryDirectory(prefix="pr5316-depgroup-") as directory:
             tx_file = str(Path(directory) / "waiter.json")
             self.Ckb_cli.tx_init(tx_file, client.url)
@@ -317,6 +340,8 @@ class TestResolutionRejection(CkbTest):
             "dep_type": "dep_group",
         } in waiter_tx["cell_deps"]
         assert waiter_tx["inputs"][0]["previous_output"]["tx_hash"] == input_parent
+
+        # 3. 交替补齐两个来源，确认只在两者都满足时进入已接受池。
         for first_parent, second_parent, first_tx, second_tx in (
             (input_parent, member_parent, input_parent_tx, member_parent_tx),
             (member_parent, input_parent, member_parent_tx, input_parent_tx),
