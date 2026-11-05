@@ -30,22 +30,13 @@ class TestIssue4363(CkbTest):
         cls.node2.stop()
         cls.node2.clean()
 
-    def test_01_4363(self):
+    def test_earlier_readers_commit_and_later_readers_are_rejected(self):
         """
-        https://github.com/nervosnetwork/ckb/blob/develop/util/app-config/src/legacy/tx_pool.rs#L123
-        DEFAULT_MAX_ANCESTORS_COUNT = 1000
-        https://github.com/nervosnetwork/ckb/pull/4363/files
-        When inserting a cellDep, if the chain is too long, excess transactions in the chain will be deleted.
-        0. Generate 250 live cells and cell=a
-        1. Send 200 transactions tx1(cellDep=a)
-        2. Send tx2(input = low-fee tx1.output(1 || 2 || 3 || 4 || 5))
-        3. Send tx3(cellDep = low-fee tx1.output(1 || 2 || 3 || 4 || 5))
-        4. Send tx4(consuming a)
-        5. Query low-fee tx1 reports PoolRejectedInvalidated
-        6. Query tx2 reports PoolRejectedInvalidated
-        7. Query tx3 reports PoolRejectedInvalidated
+        Issue #4363 protects a cell from being pinned by continuing dep readers.
+        Admission order fixes the reader set: preserve earlier readers, reject
+        later readers, and commit the spender after the retained readers even
+        when they do not fit in one block. Readers are not causal ancestors.
         """
-        # 0. Generate 250 live cells and cell=a
         account = self.Ckb_cli.util_key_info_by_private_key(
             self.Config.ACCOUNT_PRIVATE_1
         )
@@ -83,7 +74,7 @@ class TestIssue4363(CkbTest):
         )
         self.Miner.miner_until_tx_committed(self.node1, tx_3_father_hash)
 
-        # 0. Generate cell a
+        # Commit the shared dependency cell.
         tx_a_hash = self.Ckb_cli.wallet_transfer_by_private_key(
             self.Config.ACCOUNT_PRIVATE_2,
             account["address"]["testnet"],
@@ -92,7 +83,7 @@ class TestIssue4363(CkbTest):
             "1500000",
         )
         self.Miner.miner_until_tx_committed(self.node1, tx_a_hash)
-        # 1. Send 200 transactions tx1(cellDep=a)
+        # Exceed the legacy 1,000-ancestor threshold with independent readers.
         tx1_list = []
         tx_hash = self.Tx.send_transfer_self_tx_with_input(
             [tx_live_cell_hash],
@@ -117,7 +108,7 @@ class TestIssue4363(CkbTest):
             )
             tx1_list.append(tx_hash)
 
-        # 2. Send tx2(input = low-fee tx1.output(1 || 2 || 3 || 4 || 5))
+        # Keep input descendants and dependency descendants of the cheapest readers.
         tx2_list = []
         tx22_list = []
         for i in range(3):
@@ -140,7 +131,6 @@ class TestIssue4363(CkbTest):
             )
             tx22_list.append(tx_hash)
 
-        # 3. Send tx3(cellDep = low-fee tx1.output(1 || 2 || 3 || 4 || 5))
         tx3_list = []
         for i in range(3):
             tx_hash = self.Tx.send_transfer_self_tx_with_input(
@@ -154,7 +144,27 @@ class TestIssue4363(CkbTest):
             )
             tx3_list.append(tx_hash)
 
-        # 4. Send tx4(consuming a)
+        earlier = set(tx1_list + tx2_list + tx22_list + tx3_list)
+        for node in (self.node1, self.node2):
+            self._wait_pool(node, earlier)
+
+        # Establish that fresh, distinct readers are valid before the spend.
+        later = [
+            self.Tx.build_send_transfer_self_tx_with_input(
+                [tx_live_cell_hash],
+                [hex(index)],
+                account_private,
+                output_count=3,
+                fee=1_000_090,
+                api_url=self.node1.getClient().url,
+                dep_cells=[{"tx_hash": tx_a_hash, "index_hex": "0x0"}],
+            )
+            for index in range(1005, 1008)
+        ]
+        for node in (self.node1, self.node2):
+            for transaction in later:
+                node.getClient().test_tx_pool_accept(transaction, "passthrough")
+
         tx_a_cost_hash = self.Tx.send_transfer_self_tx_with_input(
             [tx_a_hash],
             ["0x0"],
@@ -163,49 +173,58 @@ class TestIssue4363(CkbTest):
             fee=100090,
             api_url=self.node1.getClient().url,
         )
-        # TODO remove sleep
-        time.sleep(10)
-        # 5. Query low-fee tx1 reports PoolRejectedInvalidated
-        print("---- tx1_list------")
-        pending_status = 0
-        rejected_status = 0
-        for tx_hash in tx1_list:
-            response = self.node1.getClient().get_transaction(tx_hash)
-            response2 = self.node2.getClient().get_transaction(tx_hash)
-            assert response["tx_status"]["status"] == response2["tx_status"]["status"]
-            if response["tx_status"]["status"] == "pending":
-                pending_status += 1
-            if response["tx_status"]["status"] == "rejected":
-                rejected_status += 1
-        assert pending_status == 999
-        assert rejected_status == 6
-        # 6. Query tx2 reports PoolRejectedInvalidated
-        print("---- tx2_hash------")
-        for tx_hash in tx2_list:
-            response = self.node1.getClient().get_transaction(tx_hash)
-            response2 = self.node2.getClient().get_transaction(tx_hash)
-            assert response["tx_status"]["status"] == response2["tx_status"]["status"]
-            assert response["tx_status"]["status"] == "rejected"
+        expected = earlier | {tx_a_cost_hash}
+        for node in (self.node1, self.node2):
+            self._wait_pool(node, expected)
+            self._assert_late_readers_rejected(node, later)
+            self._wait_pool(node, expected)
 
-        print("---- tx22_list------")
-        for tx_hash in tx22_list:
-            response = self.node1.getClient().get_transaction(tx_hash)
-            response2 = self.node2.getClient().get_transaction(tx_hash)
-            # unknown: the transaction (tx) did not broadcast to node 2.
+        # Keep attempting reads while mining. A full block may postpone the
+        # spender, but must not let it invalidate readers accepted before it.
+        committed = set()
+        readers = set(tx1_list)
+        for _ in range(10):
+            if tx_a_cost_hash not in committed:
+                self._assert_late_readers_rejected(self.node1, later)
+            self.Miner.miner_with_version(self.node1, "0x0")
+            header = self.node1.getClient().get_tip_header()
+            block = self.node1.getClient().get_block(header["hash"])
+            for transaction in block["transactions"]:
+                tx_hash = transaction["hash"]
+                if tx_hash == tx_a_cost_hash:
+                    assert (
+                        readers <= committed
+                    ), "the spender overtook an earlier reader"
+                committed.add(tx_hash)
+            self.Node.wait_node_height(self.node2, int(header["number"], 16), 30)
             assert (
-                response2["tx_status"]["status"] == "rejected"
-                or response2["tx_status"]["status"] == "unknown"
+                self.node2.getClient().get_block_hash(header["number"])
+                == header["hash"]
             )
-            assert response["tx_status"]["status"] == "rejected"
+            if expected <= committed:
+                break
+        assert expected <= committed, "finite earlier readers must not pin the dep cell"
+        for node in (self.node1, self.node2):
+            status = node.getClient().get_transaction(tx_a_cost_hash)["tx_status"]
+            assert status["status"] == "committed"
+            self._wait_pool(node, set())
+        self.did_pass = True
 
-        # 7. Query tx3 reports PoolRejectedInvalidated
-        print("---- tx3_list------")
-        for tx_hash in tx3_list:
-            response = self.node1.getClient().get_transaction(tx_hash)
-            response2 = self.node2.getClient().get_transaction(tx_hash)
-            # unknown: the transaction (tx) did not broadcast to node 2.
-            assert (
-                response2["tx_status"]["status"] == "rejected"
-                or response2["tx_status"]["status"] == "unknown"
-            )
-            assert response["tx_status"]["status"] == "rejected"
+    @staticmethod
+    def _assert_late_readers_rejected(node, transactions):
+        for transaction in transactions:
+            with pytest.raises(Exception, match=r"TransactionFailedToResolve.*Dead"):
+                node.getClient().send_transaction(transaction)
+
+    @staticmethod
+    def _wait_pool(node, expected):
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            pool = node.getClient().get_raw_tx_pool()
+            actual = set(pool["pending"]) | set(pool["proposed"])
+            if actual == expected:
+                return
+            time.sleep(0.1)
+        raise AssertionError(
+            f"pool mismatch: missing={expected - actual}, unexpected={actual - expected}"
+        )
