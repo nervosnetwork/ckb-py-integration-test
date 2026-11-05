@@ -1,0 +1,14 @@
+{
+  "upstream_repository": "https://github.com/nervosnetwork/ckb",
+  "upstream_commit": "c2596c9d2ea161afbeb9ba905b66a34454aaef27",
+  "upstream_directory": "script/testdata",
+  "manual_build_stdlib_commit": "6bf2bca668e0db5f9eb120eb78b31782899ef90d",
+  "note": "The imported ELF files match upstream at this commit. Manual builds use pinned headers and produce separate outputs; compiler/stdlib changes can alter binary bytes and cycles.",
+  "fixtures": {
+    "current_cycles": {
+      "source": "current_cycles.c",
+      "source_sha256": "6bdc1959526937cf14dd542d7302a9555de3725d037b95445e22b7f60d34181c",
+      "binary_sha256": "1765d260c9af7d2ca5806d54ae8d967d88c54eb46388a67d4d0804377b785b25"
+    }
+  }
+}

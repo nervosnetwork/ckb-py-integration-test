@@ -1,7 +1,6 @@
 # https://github.com/nervosnetwork/ckb/pull/4111
 import time
 
-import pytest
 
 from framework.basic import CkbTest
 from framework.util import get_project_root
@@ -35,29 +34,67 @@ class Test4111(CkbTest):
         cls.node.stop()
         cls.node.clean()
 
-    def test_issue_4111(self):
+    # TEST-MAP: VT2-53
+    def test_output_capacity_exceeding_inputs_is_rejected(self):
         """
-        build tx that output cap > input cap
-        expected contains (outputs capacity) > (inputs capacity) msg
-        but current ckb-cli not return error.data msg :
-        Returns: error:Malformed Overflow transaction
-
-        1. send tx that output cap > input cap
+        1. 创建并确认容量为 99 CKB 的输入。
+        2. 构造输出 100 CKB 的超额交易，检查两个 RPC 都拒绝且交易池不变。
+        3. 用相同输入构造输出 98 CKB 的合法交易，检查预检与入池 cycles 一致。
         """
+        import requests
 
-        # 1. send tx that output cap > input cap
-        with pytest.raises(Exception) as exc_info:
-            self.deploy_and_invoke(
-                self.Config.MINER_PRIVATE_1,
-                f"{get_project_root()}/source/contract/always_success",
-                self.node,
-                1,
-            )
-        expected_error_message = "Malformed Overflow transaction"
-        print("exc_info.value.args[0]:", exc_info.value.args[0])
+        # 1. 准备已确认的 99 CKB 输入，独立核对实际输出容量。
+        client = self.node.getClient()
+        key = self.Config.ACCOUNT_PRIVATE_2
+        address = self.Ckb_cli.util_key_info_by_private_key(key)["address"]["testnet"]
+        funding = self.Ckb_cli.wallet_transfer_by_private_key(
+            key, address, 99, api_url=client.url, fee_rate="1000"
+        )
+        self.Miner.miner_until_tx_committed(self.node, funding)
         assert (
-            expected_error_message in exc_info.value.args[0]
-        ), f"Expected substring '{expected_error_message}' not found in actual string '{exc_info.value.args[0]}'"
+            int(
+                client.get_transaction(funding)["transaction"]["outputs"][0][
+                    "capacity"
+                ],
+                16,
+            )
+            == 99 * 100_000_000
+        )
+
+        # 2. 输出容量超过输入，检查预检和提交均返回 Malformed/Overflow。
+        invalid = self.Tx.build_send_transfer_self_tx_with_input(
+            [funding], ["0x0"], key, fee=-100_000_000, api_url=client.url
+        )
+        assert int(invalid["outputs"][0]["capacity"], 16) == 100 * 100_000_000
+        before = client.get_raw_tx_pool(False)
+        for method in ("test_tx_pool_accept", "send_transaction"):
+            response = requests.post(
+                client.url,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": method,
+                    "params": [invalid, "passthrough"],
+                },
+                timeout=30,
+            )
+            response.raise_for_status()
+            error = response.json()["error"]
+            assert error["code"] == -1108, error
+            assert "Malformed" in error["data"] and "Overflow" in error["data"], error
+            assert client.get_raw_tx_pool(False) == before
+        # 3. 使用同一输入、正常正手续费和有效签名，核对合法交易的 cycles 和入池状态。
+        valid = self.Tx.build_send_transfer_self_tx_with_input(
+            [funding], ["0x0"], key, fee=100_000_000, api_url=client.url
+        )
+        assert int(valid["outputs"][0]["capacity"], 16) == 98 * 100_000_000
+        preview = client.test_tx_pool_accept(valid, "passthrough")
+        tx_hash = client.send_transaction(valid)
+        result = client.get_transaction(tx_hash)
+        assert result["tx_status"]["status"] in ("pending", "proposed")
+        assert int(result["cycles"], 16) == int(preview["cycles"], 16) > 0
+        assert tx_hash in client.get_raw_tx_pool(False)["pending"]
+        self.did_pass = True
 
     def deploy_and_invoke(self, account, path, node, try_count=5):
         if try_count < 0:

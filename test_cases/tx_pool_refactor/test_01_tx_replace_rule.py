@@ -2,6 +2,13 @@ import json
 import time
 
 import pytest
+from test_cases.network_verification import workload
+from test_cases.tx_pool_refactor.admission_fixture import (
+    Transactions,
+    assert_pool,
+    rpc_result,
+)
+from test_cases.tx_pool_refactor.dao_precheck.support import transaction_hash
 from framework.basic import CkbTest
 
 
@@ -13,6 +20,7 @@ class TestTxReplaceRule(CkbTest):
             cls.CkbNodeConfigPath.CURRENT_TEST, "tx_pool/node1", 8120, 8225
         )
         cls.node.prepare()
+        workload.add_genesis_test_cells(cls.node)
         cls.node.start()
         cls.Miner.make_tip_height_number(cls.node, 30)
 
@@ -31,67 +39,30 @@ class TestTxReplaceRule(CkbTest):
         cls.node.stop()
         cls.node.clean()
 
+    # TEST-MAP: TPA-02
     def test_transaction_replacement_with_unconfirmed_inputs_failure(self):
         """
-        replace Tx contains unconfirmed inputs, replace failed
-        1. a->b ,c->d => a,d -> b
-            ERROR :RBF rejected: new Tx contains unconfirmed inputs
-        :return:
+        1. 接收 A、其后代 C 和独立未确认父 P。
+        2. 提交高费 B，同时冲突 A 并新增 P 输入。
+        3. 核对 -1111、原成员和账本完全保持。
         """
-        TEST_PRIVATE_1 = (
-            "0x98400f6a67af07025f5959af35ed653d649f745b8f54bf3f07bef9bd605ee941"
-        )
-
-        account = self.Ckb_cli.util_key_info_by_private_key(TEST_PRIVATE_1)
-        cell_a_hash = self.Ckb_cli.wallet_transfer_by_private_key(
-            self.Config.MINER_PRIVATE_1,
-            account["address"]["testnet"],
-            100,
-            self.node.getClient().url,
-            "1500",
-        )
-
-        cell_c_hash = self.Ckb_cli.wallet_transfer_by_private_key(
-            self.Config.ACCOUNT_PRIVATE_1,
-            account["address"]["testnet"],
-            100,
-            self.node.getClient().url,
-            "1500",
-        )
-        tx_a_to_b = self.Tx.send_transfer_self_tx_with_input(
-            [cell_a_hash],
-            ["0x0"],
-            TEST_PRIVATE_1,
-            data="0x",
-            fee=5000,
-            output_count=1,
-            api_url=self.node.getClient().url,
-        )
-        tx_c_to_d = self.Tx.send_transfer_self_tx_with_input(
-            [cell_c_hash],
-            ["0x0"],
-            TEST_PRIVATE_1,
-            data="0x",
-            fee=5000,
-            output_count=1,
-            api_url=self.node.getClient().url,
-        )
-
-        with pytest.raises(Exception) as exc_info:
-            tx_ad_to_b = self.Tx.send_transfer_self_tx_with_input(
-                [cell_a_hash, tx_c_to_d],
-                ["0x0", "0x0"],
-                TEST_PRIVATE_1,
-                data="0x",
-                fee=5000,
-                output_count=1,
-                api_url=self.node.getClient().url,
-            )
-        expected_error_message = "RBF rejected: new Tx contains unconfirmed inputs`"
-        assert expected_error_message in exc_info.value.args[0], (
-            f"Expected substring '{expected_error_message}' "
-            f"not found in actual string '{exc_info.value.args[0]}'"
-        )
+        client = self.node.getClient()
+        # 1. 独立 P 的输入没有出现在原冲突根中。
+        txs = Transactions(self.node, 201)
+        a, p = txs.build([0]), txs.build([1])
+        c = txs.build([txs.point(a)])
+        for tx in (a, c, p):
+            assert client.send_transaction(tx) == transaction_hash(tx)
+        before = client.get_raw_tx_pool(True)
+        # 2. 费用充分，拒绝原因限定为新增未确认输入。
+        b = txs.build([0, txs.point(p)], fee=100000)
+        error = rpc_result(client, "send_transaction", [b, "passthrough"])["error"]
+        assert error["code"] == -1111, error
+        assert "unconfirmed inputs" in str(error)
+        # 3. 失败没有提交任何裁剪。
+        assert client.get_raw_tx_pool(True) == before
+        assert_pool(self.node, txs, [a, c, p])
+        self.did_pass = True
 
     def test_transaction_replacement_with_confirmed_inputs_successful(self):
         """
@@ -310,75 +281,44 @@ class TestTxReplaceRule(CkbTest):
         assert tx3_response["tx_status"]["status"] == "pending"
         assert "RBFRejected" in tx2_response["tx_status"]["reason"]
 
+    # TEST-MAP: TPA-04
+    # TEST-MAP: TPA-24
     def test_tx_conflict_too_many_txs(self):
         """
-        if the replaced transaction affects more than 100 transactions, the replacement will fail.
-
-            1. send tx A
-                send tx successful
-            2. send A linked tx 100
-                send tx successful
-            3. replace A tx
-                Error : PoolRejectedRBF
-            4. replace first linked tx
-                replace successful
-
-            5. query tx pool
-                pending tx = 2
-        :return:
+        1. 逐笔接收 100/101 项链式后代及独立 I，确认容量充分。
+        2. 以充分费用替换根输入，分别要求成功或 -1111。
+        3. 核对成功的完整替换或失败的原集合及总量保持。
         """
-        account = self.Ckb_cli.util_key_info_by_private_key(
-            self.Config.ACCOUNT_PRIVATE_1
-        )
-        # 1. send tx A, send tx successful
-        tx_hash = self.Ckb_cli.wallet_transfer_by_private_key(
-            self.Config.ACCOUNT_PRIVATE_1,
-            account["address"]["testnet"],
-            360000,
-            self.node.getClient().url,
-            "2800",
-        )
-        first_hash = tx_hash
-        self.Node.wait_get_transaction(self.node, tx_hash, "pending")
-        tx_list = []
-        # 2. send A linked tx 100, send tx successful
-        for i in range(100):
-            tx_hash = self.Tx.send_transfer_self_tx_with_input(
-                [tx_hash],
-                ["0x0"],
-                self.Config.ACCOUNT_PRIVATE_1,
-                fee=1000,
-                api_url=self.node.getClient().url,
-            )
-            tx_list.append(tx_hash)
-            self.Node.wait_get_transaction(self.node, tx_hash, "pending")
-        # 3. replace A tx, Error : PoolRejectedRBF
-        first_tx = self.node.getClient().get_transaction(first_hash)
-        with pytest.raises(Exception) as exc_info:
-            self.Ckb_cli.wallet_transfer_by_private_key(
-                self.Config.ACCOUNT_PRIVATE_1,
-                account["address"]["testnet"],
-                360000,
-                self.node.getClient().url,
-                int(first_tx["min_replace_fee"], 16),
-            )
-        expected_error_message = "RBF rejected: Tx conflict with too many txs, conflict txs count: 101, expect <= 100"
-        assert expected_error_message in exc_info.value.args[0], (
-            f"Expected substring '{expected_error_message}' "
-            f"not found in actual string '{exc_info.value.args[0]}'"
-        )
-        # 4. replace first linked tx, replace successful
-        second_tx = self.node.getClient().get_transaction(tx_list[0])
-        self.Tx.send_transfer_self_tx_with_input(
-            [first_hash],
-            ["0x0"],
-            self.Config.ACCOUNT_PRIVATE_1,
-            fee=int(second_tx["min_replace_fee"], 16),
-            api_url=self.node.getClient().url,
-        )
-        # 5. query tx pool, pending tx = 2
-        tx_pool = self.node.getClient().get_raw_tx_pool(True)
-        assert len(tx_pool["pending"].keys()) == 2
+        client = self.node.getClient()
+        for count in (100, 101):
+            client.clear_tx_pool()
+            # 1. 每个祖先真实入池；配置允许 200 个祖先。
+            txs = Transactions(self.node, 204)
+            chain = [txs.build([0], nonce=count)]
+            for _ in range(count - 1):
+                chain.append(txs.build([txs.point(chain[-1])]))
+            independent = txs.build([1], fee=1000000)
+            for tx in chain + [independent]:
+                assert client.send_transaction(tx) == transaction_hash(tx)
+            assert_pool(self.node, txs, chain + [independent])
+            before = client.get_raw_tx_pool(True)
+            # 2. 变化只有冲突闭包数量，容量不参与裁剪。
+            b = txs.build([0], fee=10000000, nonce=count)
+            if count == 100:
+                assert client.send_transaction(b) == transaction_hash(b)
+            else:
+                error = rpc_result(client, "send_transaction", [b, "passthrough"])[
+                    "error"
+                ]
+                assert error["code"] == -1111, error
+                assert "conflict with too many txs" in str(error), error
+            # 3. 101 分支验证完整旧集合，而不是只检查根交易。
+            if count == 100:
+                assert_pool(self.node, txs, [b, independent])
+            else:
+                assert client.get_raw_tx_pool(True) == before
+                assert_pool(self.node, txs, chain + [independent])
+        self.did_pass = True
 
     def test_replace_pending_transaction_successful(self):
         """

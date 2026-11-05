@@ -1,6 +1,10 @@
 import json
 import re
+import shlex
+import tempfile
+from contextlib import contextmanager
 from functools import wraps
+from pathlib import Path
 
 import yaml
 
@@ -11,6 +15,16 @@ from framework.util import run_command
 # cli_path = "cd {root_path}/{cli_path} && ./ckb-cli".format(root_path=get_project_root(),
 #                                                            cli_path=CkbNodeConfigPath.CURRENT_TEST.ckb_bin_path)
 cli_path = f"cd {get_project_root()}/source && ./ckb-cli"
+
+
+@contextmanager
+def _private_key_path(private_key):
+    """Give each CLI invocation its own short-lived private-key file."""
+    with tempfile.TemporaryDirectory(prefix="ckb-cli-key-") as directory:
+        path = Path(directory) / "private-key"
+        path.write_text(f"{private_key}\n", encoding="utf-8")
+        path.chmod(0o600)
+        yield shlex.quote(str(path))
 
 
 def wallet_get_capacity(ckb_address, api_url="http://127.0.0.1:8114"):
@@ -129,12 +143,12 @@ def wallet_transfer_by_private_key(
         api_url: default ckb rpc url
         fee_rate: default tx fee
     """
-    cmd = (
-        f"export API_URL={api_url} &&  echo {private_key} > /tmp/tmp.data && {cli_path} wallet transfer "
-        f"--privkey-path /tmp/tmp.data --to-address  {to_ckb_address}  --capacity {capacity}  --fee-rate {fee_rate} --skip-check-to-address "
-        f" && rm /tmp/tmp.data"
-    )
-    return run_command(cmd).replace("\n", "")
+    with _private_key_path(private_key) as key_path:
+        cmd = (
+            f"export API_URL={api_url} && {cli_path} wallet transfer "
+            f"--privkey-path {key_path} --to-address  {to_ckb_address}  --capacity {capacity}  --fee-rate {fee_rate} --skip-check-to-address"
+        )
+        return run_command(cmd).replace("\n", "")
 
 
 def version():
@@ -322,11 +336,12 @@ def util_key_info_by_private_key(account_private):
     """
     # echo 0xd00c06bfd800d27397002dca6fb0993d5ba6399b4238b2f29ee9deb97593d2bc > tmp.data && ./ckb-cli util key-info
     # --privkey-path tmp.data --output-format json && rm tmp.data
-    cmd = (
-        f"echo {account_private} > /tmp/tmp.data && {cli_path} util key-info --privkey-path /tmp/tmp.data "
-        f"--output-format json"
-    )
-    return json.loads(run_command(cmd))
+    with _private_key_path(account_private) as key_path:
+        cmd = (
+            f"{cli_path} util key-info --privkey-path {key_path} "
+            f"--output-format json"
+        )
+        return json.loads(run_command(cmd))
 
 
 def tx_init(tx_file, api_url="http://127.0.0.1:8114"):
@@ -370,11 +385,12 @@ def tx_sign_inputs(account_private, tx_file, api_url="http://127.0.0.1:8114"):
         signature: 0x0c44c12638277ffa6eafeac55cd918932f1cdbcfd4df413c11e8fb5
         b48f41ba22f738bad494e63d78c2bf2a4e0f4676db1d48d37f3d872d28bac70b2ef5a567a01
     """
-    cmd = (
-        f"export API_URL={api_url} && echo {account_private} > /tmp/account.demo && {cli_path} tx sign-inputs "
-        f"--privkey-path /tmp/account.demo --tx-file {tx_file} --output-format json && rm /tmp/account.demo"
-    )
-    return json.loads(run_command(cmd))
+    with _private_key_path(account_private) as key_path:
+        cmd = (
+            f"export API_URL={api_url} && {cli_path} tx sign-inputs "
+            f"--privkey-path {key_path} --tx-file {tx_file} --output-format json"
+        )
+        return json.loads(run_command(cmd))
 
 
 def tx_add_signature(lock_arg, signature, tx_file, api_url="http://127.0.0.1:8114"):

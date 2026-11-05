@@ -8,3 +8,5 @@ __pycache__
 pid.txt
 .idea
 venv
+# Local pinned-source regression build/cache state.
+.ai-test-agent/

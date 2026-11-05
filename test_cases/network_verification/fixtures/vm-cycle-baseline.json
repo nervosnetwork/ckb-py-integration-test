@@ -1,0 +1,10 @@
+{
+  "budget_workload_cycles": 135598681,
+  "script_sha256": {
+    "always_success": "447282f65719c67044506f25103fc11325a1776d67cc06784b81f7c665c8b851",
+    "current_cycles": "1765d260c9af7d2ca5806d54ae8d967d88c54eb46388a67d4d0804377b785b25",
+    "cpu_budget_stress_1b": "dce46a6c0020f3fe0d26f0e9e17cb5a8fba280933d23201559a98a189046ef87"
+  },
+  "reference": "Independent pre-change budget_workload_cycles for current_cycles groups; never learned from the node under test.",
+  "cpu_stress_reference": "Only the separately added finite CPU stress ELF is hash-pinned here. Its local and relay cycles are compared for consistency, not claimed as an independent pre-change cycles baseline."
+}
