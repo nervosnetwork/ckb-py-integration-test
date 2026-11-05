@@ -27,14 +27,14 @@ from test_cases.tx_pool_refactor.admission_fixture import (
 from test_cases.tx_pool_refactor.dao_precheck.support import transaction_hash
 from test_cases.tx_pool_refactor.observations import resources, save_observations
 from test_cases.tx_pool_refactor.subscription_client import SubscriptionClient
-from test_cases.tx_pool_refactor.test_process_resilience import read_snapshot
-from test_cases.tx_pool_refactor.tests.test_29_pr5316_persistence_replay import (
+from test_cases.tx_pool_refactor.extended.process_faults import read_snapshot
+from test_cases.tx_pool_refactor.test_persistence_replay import (
     _transactions,
 )
-from test_cases.tx_pool_refactor.tests.test_38_pr5316_template_notify import (
+from test_cases.tx_pool_refactor.extended.notifications import (
     _HoldingServer,
 )
-from test_cases.tx_pool_refactor.tests.test_50_pr5316_capacity_metrics import _metrics
+from test_cases.tx_pool_refactor.test_capacity_metrics import _metrics
 
 
 def percentiles(values):

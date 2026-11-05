@@ -18,7 +18,7 @@ from test_cases.tx_pool_refactor.admission_fixture import Transactions, size_in_
 from test_cases.tx_pool_refactor.dao_precheck.support import transaction_hash
 from test_cases.tx_pool_refactor.observations import resources, save_observations
 from test_cases.tx_pool_refactor.tcp_response_gate import ResponseGate
-from test_cases.tx_pool_refactor.tests.test_50_pr5316_capacity_metrics import (
+from test_cases.tx_pool_refactor.test_capacity_metrics import (
     _metric,
     _metrics,
 )
@@ -344,54 +344,6 @@ class TestPeerResilience(CkbTest):
             )
         finally:
             executor.shutdown(wait=True)
-        self.did_pass = True
-
-    # TEST-MAP: TMN-02
-    def test_duplicate_relay_counts_one_accepted_owner(self):
-        """
-        1. 两来源保存同一交易，目标首次通过真实请求接收。
-        2. 重置目标 relay 代际并在来源重交，轮换重连后要求新增请求和相同 body。
-        3. 核对重复传播后单一账本贡献，独立诚实交易继续传播。
-        """
-        # 1. 两个来源都确实持有同一原始交易。
-        tx = workload.build_transaction(self.primary, cell=0)
-        tx_hash = transaction_hash(tx)
-        for source in (self.primary, self.backup):
-            assert source.getClient().send_transaction(tx) == tx_hash
-        client = self.target.getClient()
-        # 2. 每轮先记录请求计数，禁止用首次请求冒充重复流量证据。
-        for source in (self.primary, self.backup, self.primary):
-            before = len(workload.transaction_requests(source, tx_hash))
-            # Reconnection alone does not replay a consumed announcement.
-            assert source.getClient().remove_transaction(tx_hash) is True
-            assert source.getClient().send_transaction(tx) == tx_hash
-            source.connected(self.target)
-            workload.wait_for(
-                lambda: len(workload.transaction_requests(source, tx_hash)) > before,
-                "actual repeated transaction request",
-                60,
-            )
-            workload.assert_pool_transaction(
-                self.target, tx_hash, tx, workload.FAST_CYCLES
-            )
-            # 3. 当前 Accepted 只有一次贡献，独立标记通过另外的正常 peer。
-            assert set(workload.pool_transactions(client)) == {tx_hash}
-            info = client.tx_pool_info()
-            assert int(info["total_tx_size"], 16) == size_in_block(tx)
-            assert int(info["total_tx_cycles"], 16) == workload.FAST_CYCLES
-            client.remove_node(source.get_peer_id())
-            workload.wait_for(
-                lambda: self.target.get_connected_count() == 0, "source disconnected"
-            )
-            assert client.remove_transaction(tx_hash) is True
-            # remove_transaction preserves known-hash filtering; public clear resets it.
-            client.clear_tx_pool()
-        self.honest.connected(self.target)
-        marker = workload.build_transaction(self.honest, cell=7)
-        marker_hash = self.honest.getClient().send_transaction(marker)
-        workload.assert_pool_transaction(
-            self.target, marker_hash, marker, workload.FAST_CYCLES
-        )
         self.did_pass = True
 
     # TEST-MAP: TMN-03

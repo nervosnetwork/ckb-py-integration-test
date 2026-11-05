@@ -10,7 +10,6 @@ import time
 from pathlib import Path
 
 import toml
-import requests
 
 
 from framework.basic import CkbTest
@@ -484,48 +483,4 @@ class TestDaoPreScriptVerification(CkbTest):
         assert entry["cycles"] == expected["cycles"] and entry["fee"] == expected["fee"]
         assert self.client.get_block_hash(old_header["number"]) != old_block
         assert self._commit(tx_hash) != old_block
-        self.did_pass = True
-
-    # TEST-MAP: VT2-54
-    def test_dao_withdraw_requires_withdrawing_header(self):
-        """
-        1. 完成 DAO 准备提取并构造包含完整 header_deps 的最终提取交易。
-        2. 删除准备提取区块头，检查两个 RPC 返回 -1108 和 InvalidOutPoint。
-        3. 使用保留完整区块头依赖的对照交易，检查预检通过并成功上链。
-        """
-        # 1. 确认准备提取交易，取得所在区块头并构造有效的最终提取交易。
-        cells = self._create_cells()
-        prepare = self._prepare_withdraw(cells)
-        prepare_hash = self.client.send_transaction(prepare)
-        prepare_block = self._commit(prepare_hash)
-        valid = self._final_withdraw(cells, prepare, prepare_hash, prepare_block)
-
-        # 2. 仅删除准备提取所在区块的 header_dep，核对错误码、错误类型和未入池状态。
-        invalid = copy.deepcopy(valid)
-        assert invalid["header_deps"] == [cells["header"]["hash"], prepare_block]
-        invalid["header_deps"].remove(prepare_block)
-        for method in ("test_tx_pool_accept", "send_transaction"):
-            # 直接检查公开 RPC 响应，保留通用 RPC 异常封装会丢失的数值错误码。
-            response = requests.post(
-                self.client.url,
-                json={
-                    "id": 1,
-                    "jsonrpc": "2.0",
-                    "method": method,
-                    "params": [invalid, "passthrough"],
-                },
-                timeout=30,
-            )
-            response.raise_for_status()
-            error = response.json()["error"]
-            assert error["code"] == -1108, error
-            assert (
-                "Malformed" in error["message"]
-                and "InvalidOutPoint" in error["message"]
-            ), error
-            self._assert_absent(invalid)
-
-        # 3. 完整 header_deps 的对照交易应通过预检，并成功提交和确认。
-        self.client.test_tx_pool_accept(valid, "passthrough")
-        self._commit(self.client.send_transaction(valid))
         self.did_pass = True

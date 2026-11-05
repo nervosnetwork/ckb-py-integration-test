@@ -22,6 +22,8 @@ class TestTxPoolConfigCompatibility(CkbTest):
             workload.save_node_logs(node)
             node.clean()
 
+    # TEST-MAP: NTD-02
+    # TEST-MAP: NTD-72
     # TEST-MAP: VT2-32
     # TEST-MAP: VT2-33
     def test_default_budget_rejects_removed_configuration_fields(self):

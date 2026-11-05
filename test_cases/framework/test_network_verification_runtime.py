@@ -72,8 +72,8 @@ def test_setup_failure_prints_node_log_before_cleanup(tmp_path, monkeypatch, cap
     from unittest.mock import Mock
 
     from test_cases.network_verification import workload
-    from test_cases.network_verification.test_budget_rbf import (
-        TestLocalConflictRecovery,
+    from test_cases.network_verification.test_peer_timeout import (
+        TestRemoteTimeBudgetPeer,
     )
 
     log_path = tmp_path / "node.log"
@@ -84,14 +84,14 @@ def test_setup_failure_prints_node_log_before_cleanup(tmp_path, monkeypatch, cap
         clean=Mock(side_effect=log_path.unlink),
     )
     monkeypatch.setattr(
-        TestLocalConflictRecovery,
+        TestRemoteTimeBudgetPeer,
         "CkbNode",
         SimpleNamespace(init_dev_by_port=Mock(return_value=node)),
     )
     monkeypatch.setattr(workload, "unused_ports", lambda count: [8101, 8102, 8103])
 
     with pytest.raises(RuntimeError, match="startup failed"):
-        TestLocalConflictRecovery.setup_class()
+        TestRemoteTimeBudgetPeer.setup_class()
 
     output = capsys.readouterr().out
     assert str(log_path) in output
@@ -141,55 +141,6 @@ def test_restart_requires_a_different_listening_pid(monkeypatch):
     node = SimpleNamespace(stop=lambda: None, start=lambda: None)
     with pytest.raises(AssertionError):
         workload.restart_and_assert_new_process(node)
-
-
-def test_tcp_reader_retains_coalesced_messages():
-    import socket
-    from test_cases.network_verification.test_budget_rbf import _read_json_line
-
-    reader, writer = socket.socketpair()
-    try:
-        writer.sendall(b'{"first": 1}\n{"second": 2}\n')
-        first, buffer = _read_json_line(reader, b"", 1)
-        assert first == {"first": 1}
-        second, buffer = _read_json_line(reader, buffer, 1)
-        assert second == {"second": 2}
-        assert buffer == b""
-    finally:
-        reader.close()
-        writer.close()
-
-
-def test_tcp_reader_preserves_partial_message_on_timeout():
-    import socket
-    from test_cases.network_verification.test_budget_rbf import _read_json_line
-
-    reader, writer = socket.socketpair()
-    try:
-        writer.sendall(b'{"value":')
-        value, buffer = _read_json_line(reader, b"", 0.01)
-        assert value is None
-        assert buffer == b'{"value":'
-        writer.sendall(b" 3}\n")
-        value, buffer = _read_json_line(reader, buffer, 1)
-        assert value == {"value": 3}
-        assert buffer == b""
-    finally:
-        reader.close()
-        writer.close()
-
-
-def test_tcp_reader_rejects_closed_stream():
-    import socket
-    from test_cases.network_verification.test_budget_rbf import _read_json_line
-
-    reader, writer = socket.socketpair()
-    writer.close()
-    try:
-        with pytest.raises(AssertionError, match="rejected_transaction stream closed"):
-            _read_json_line(reader, b"", 1)
-    finally:
-        reader.close()
 
 
 def test_budget_log_matches_hash_source_stage_and_reason():

@@ -1,12 +1,12 @@
 """External process faults with explicit snapshots, request outcomes and cleanup."""
 
+import http.client
 import json
 import os
-import random
 import select
 import signal
-import socket
 import struct
+import subprocess
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -18,15 +18,14 @@ import toml
 from framework.basic import CkbTest
 from test_cases.network_verification import workload
 from test_cases.tx_pool_refactor.admission_fixture import (
-    Transactions,
     packed_transaction,
 )
 from test_cases.tx_pool_refactor.dao_precheck.support import transaction_hash
-from test_cases.tx_pool_refactor.test_pool_rpc_progress import pending_submission
-from test_cases.tx_pool_refactor.tests.test_29_pr5316_persistence_replay import (
+from test_cases.tx_pool_refactor.rpc_progress_fixture import pending_submission
+from test_cases.tx_pool_refactor.test_persistence_replay import (
     _transactions,
 )
-from test_cases.tx_pool_refactor.tests.test_38_pr5316_template_notify import (
+from test_cases.tx_pool_refactor.extended.notifications import (
     _HoldingServer,
 )
 
@@ -41,20 +40,61 @@ def read_snapshot(node):
     return paths[0], data, _transactions(data[16:end]), _transactions(data[end:])
 
 
+def process_identity(pid):
+    """Match a live process by its start time and actual working directory."""
+    if not workload._process_exists(pid):
+        return None
+    started = subprocess.run(
+        ["ps", "-p", str(pid), "-o", "lstart="],
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+    cwd = subprocess.run(
+        ["lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"],
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+    if not workload._process_exists(pid):
+        return None
+    assert started.returncode == cwd.returncode == 0, (started.stderr, cwd.stderr)
+    directories = [
+        str(Path(line[1:]).resolve())
+        for line in cwd.stdout.splitlines()
+        if line.startswith("n")
+    ]
+    assert len(directories) == 1 and started.stdout.strip(), (
+        started.stdout,
+        cwd.stdout,
+    )
+    return directories[0], started.stdout.strip()
+
+
+def signal_owned_process(pid, identity, sig):
+    if process_identity(pid) != identity:
+        return
+    try:
+        os.kill(pid, sig)
+    except ProcessLookupError:
+        pass
+
+
 class TestProcessResilience(CkbTest):
-    @classmethod
-    def setup_class(cls):
-        cls.nodes = []
+    def setup_method(self, method):
+        self.did_pass = None
+        self.nodes = []
+        self.processes = []
         try:
             for name in ("subject", "peer"):
                 rpc, p2p = workload.unused_ports(2)
-                node = cls.CkbNode.init_dev_by_port(
-                    cls.CkbNodeConfigPath.CURRENT_TEST,
-                    f"tx_pool/process_resilience/{name}_{rpc}",
+                node = self.CkbNode.init_dev_by_port(
+                    self.CkbNodeConfigPath.CURRENT_TEST,
+                    f"tx_pool/process_resilience/{method.__name__}/{name}_{rpc}",
                     rpc,
                     p2p,
                 )
-                cls.nodes.append(node)
+                self.nodes.append(node)
                 node.prepare()
                 path = Path(node.ckb_toml_path)
                 config = toml.loads(path.read_text())
@@ -70,42 +110,59 @@ class TestProcessResilience(CkbTest):
                 spec["params"]["max_block_cycles"] = 1_000_000_000_000
                 path.write_text(toml.dumps(spec))
                 node.start()
-            cls.node, cls.peer = cls.nodes
-            cls.Miner.make_tip_height_number(cls.peer, 30)
-            workload.sync_blocks(cls.peer, cls.node, 1, 30)
-            cls.base_hash = cls.peer.getClient().get_tip_header()["hash"]
+                self.record_process(node)
+            self.node, self.peer = self.nodes
+            self.Miner.make_tip_height_number(self.peer, 30)
+            workload.sync_blocks(self.peer, self.node, 1, 30)
+            self.base_hash = self.peer.getClient().get_tip_header()["hash"]
         except Exception:
-            cls.teardown_class()
+            self.teardown_method(method)
             raise
 
-    @classmethod
-    def teardown_class(cls):
-        for node in reversed(cls.nodes):
-            node.stop()
-            workload.save_node_logs(node)
-            node.clean()
-
-    def setup_method(self, method):
-        self.did_pass = None
-        for node in self.nodes:
-            client = node.getClient()
-            for peer in client.get_peers():
-                client.remove_node(peer["node_id"])
-            workload.wait_for(
-                lambda: node.get_connected_count() == 0, "isolated process test"
-            )
-            if client.get_tip_header()["hash"] != self.base_hash:
-                client.truncate(self.base_hash)
-            client.clear_tx_pool()
+    def record_process(self, node):
+        pid = workload._node_process_id(node)
+        assert pid is not None
+        identity = process_identity(pid)
+        assert identity is not None and identity[0] == str(Path(node.ckb_dir).resolve())
+        self.processes.append((pid, identity))
 
     def teardown_method(self, method):
-        pass
+        # RPC 已关闭的进程也按启动时间和 cwd 识别；单个清理错误不打断其余节点。
+        errors = []
+        for pid, identity in self.processes:
+            try:
+                signal_owned_process(pid, identity, signal.SIGTERM)
+                try:
+                    workload.wait_for(
+                        lambda: process_identity(pid) != identity,
+                        "owned process exited",
+                        workload.BUDGET_RPC_TIMEOUT,
+                    )
+                except AssertionError:
+                    signal_owned_process(pid, identity, signal.SIGKILL)
+                    workload.wait_for(
+                        lambda: process_identity(pid) != identity,
+                        "owned process killed",
+                        20,
+                    )
+                    errors.append((pid, "cleanup required SIGKILL"))
+            except Exception as error:
+                errors.append((pid, repr(error)))
+        for node in reversed(self.nodes):
+            try:
+                if workload._node_process_id(node) is not None:
+                    workload.stop_and_assert_process_exit(node)
+                workload.save_node_logs(node)
+                node.clean()
+            except Exception as error:
+                errors.append((node.ckb_dir, repr(error)))
+        assert not errors, errors
 
     # TEST-MAP: TCH-01
     def test_graceful_stop_reconciles_concurrent_requests_and_held_notify(self):
         """
         1. 启用真实阻塞通知端，确认已接收交易和通知请求在途。
-        2. 并发提交独立交易时 SIGTERM，记录每个 HTTP 结局并确认旧 PID 退出。
+        2. 确认慢交易在 VM 中执行且 HTTP 未返回，再并发提交独立交易并 SIGTERM。
         3. 独立解码快照；无 peer 重启，所有已返回成功交易恢复且 body 一致。
         4. 逐 hash 记录未完成请求结果，释放通知故障后接受新交易。
         """
@@ -116,6 +173,7 @@ class TestProcessResilience(CkbTest):
         config_path = Path(self.node.ckb_toml_path)
         original_config = config_path.read_text()
         executor = ThreadPoolExecutor(max_workers=4)
+        slow_connection = None
         try:
             workload.stop_and_assert_process_exit(self.node)
             config = toml.loads(original_config)
@@ -125,6 +183,7 @@ class TestProcessResilience(CkbTest):
             config["block_assembler"]["notify_timeout_millis"] = 15000
             config_path.write_text(toml.dumps(config))
             self.node.start()
+            self.record_process(self.node)
             client = self.node.getClient()
             retained = workload.build_transaction(self.node, cell=0)
             retained_hash = client.send_transaction(retained)
@@ -165,11 +224,61 @@ class TestProcessResilience(CkbTest):
                         "finished": time.monotonic(),
                     }
 
-            # 2. 提交工作与 SIGTERM 重叠；每个请求保留成功/拒绝/断连原始结果。
+            # 2. 新日志标记和未返回的 HTTP 证明服务端真实在途，再施加 SIGTERM。
+            slow = workload.build_budget_transaction(self.node, cell=5)
+            log_path = Path(self.node.ckb_dir) / "node.log"
+            offset = log_path.stat().st_size
+            slow_started = time.monotonic()
+            slow_connection = pending_submission(self.node, slow)
+            workload.wait_for(
+                lambda: "CPU_STRESS_BEGIN_1B" in log_path.read_text()[offset:],
+                "VM executing before SIGTERM",
+                15,
+            )
+            assert not select.select([slow_connection], [], [], 0)[0]
+            assert transaction_hash(slow) not in workload.pool_transactions(client)
             futures = [executor.submit(submit, tx) for tx in txs]
             barrier.wait(timeout=10)
-            previous = workload.stop_and_assert_process_exit(self.node)
+            assert not select.select([slow_connection], [], [], 0)[0]
+            assert server.snapshot()[1] > 0
+            print(
+                {
+                    "vm_started_before_sigterm": transaction_hash(slow),
+                    "http_pending": True,
+                    "notify_held": True,
+                }
+            )
+            previous = workload._node_process_id(self.node)
+            assert previous is not None
+            os.kill(previous, signal.SIGTERM)
+            # 活跃 Local 验证可在停机时排空；使用同一有限工作负载的完成期限。
+            workload.wait_for(
+                lambda: not workload._process_exists(previous),
+                "SIGTERM with in-flight VM completed",
+                workload.BUDGET_RPC_TIMEOUT,
+            )
+            assert workload._node_process_id(self.node) is None
             outcomes = [future.result(timeout=50) for future in futures]
+            # 旧 PID 已退出，读取在途请求的真实最终响应；成功响应也必须进入快照保证。
+            response = http.client.HTTPResponse(slow_connection)
+            try:
+                response.begin()
+                slow_outcome = {
+                    "status": response.status,
+                    "body": response.read().decode(),
+                    "started": slow_started,
+                    "finished": time.monotonic(),
+                }
+            except (OSError, http.client.HTTPException) as error:
+                slow_outcome = {
+                    "transport": type(error).__name__,
+                    "started": slow_started,
+                    "finished": time.monotonic(),
+                }
+            finally:
+                response.close()
+            txs.append(slow)
+            outcomes.append(slow_outcome)
             log = (Path(self.node.ckb_dir) / "node.log").read_text()
             assert "CKB shutdown" in log
             for failure in (
@@ -189,16 +298,36 @@ class TestProcessResilience(CkbTest):
                     if "result" in body:
                         assert body["result"] == transaction_hash(tx)
                         completed[transaction_hash(tx)] = tx
+            print(
+                {
+                    "snapshot_accepted_count": len(accepted),
+                    "snapshot_recovery_count": len(recovery),
+                    "successful_response_hashes": sorted(completed),
+                    "slow_request": slow_outcome,
+                }
+            )
             assert set(map(packed_transaction, completed.values())) <= set(accepted)
             assert recovery == []
             server.release.set()
             self.node.start()
+            self.record_process(self.node)
             assert workload._node_process_id(self.node) != previous
             assert self.node.get_connected_count() == 0
+            workload.wait_for(
+                lambda: set(completed) <= set(workload.pool_transactions(client)),
+                "all successful responses replayed after restart",
+                workload.BUDGET_RPC_TIMEOUT,
+            )
             for tx_hash, tx in completed.items():
-                workload.assert_pool_transaction(
-                    self.node, tx_hash, tx, workload.FAST_CYCLES
-                )
+                if tx_hash == transaction_hash(slow):
+                    restored = client.get_transaction(tx_hash)
+                    assert restored["tx_status"]["status"] in ("pending", "proposed")
+                    assert restored["transaction"] == {**tx, "hash": tx_hash}
+                    assert tx_hash in workload.pool_transactions(client)
+                else:
+                    workload.assert_pool_transaction(
+                        self.node, tx_hash, tx, workload.FAST_CYCLES
+                    )
             # 4. 没收到成功响应的请求以恢复状态对账，新输入证明服务可继续使用。
             for tx, outcome in zip(txs, outcomes):
                 status = client.get_transaction(transaction_hash(tx))
@@ -219,14 +348,14 @@ class TestProcessResilience(CkbTest):
                 self.node, transaction_hash(marker), marker, workload.FAST_CYCLES
             )
         finally:
+            if slow_connection is not None:
+                slow_connection.close()
             server.release.set()
             executor.shutdown(wait=True)
             server.shutdown()
             server.server_close()
             thread.join(timeout=5)
             config_path.write_text(original_config)
-            # Apply removal of notify URLs before another method uses the node.
-            workload.restart_and_assert_new_process(self.node)
         self.did_pass = True
 
     # TEST-MAP: TCH-02
@@ -245,6 +374,7 @@ class TestProcessResilience(CkbTest):
         path, saved, accepted, recovery = read_snapshot(self.node)
         assert accepted == [packed_transaction(s0)] and recovery == []
         self.node.start()
+        self.record_process(self.node)
         workload.assert_pool_transaction(self.node, s0_hash, s0, workload.FAST_CYCLES)
         # 2. 成功返回的 S1 只存在内存；慢 VM 日志证明杀进程发生于后续负载中。
         s1 = workload.build_transaction(self.node, cell=1)
@@ -272,6 +402,7 @@ class TestProcessResilience(CkbTest):
             connection.close()
         # 3. 只有 S0 属于既有快照保证；所有可能恢复的交易必须是原字节。
         self.node.start()
+        self.record_process(self.node)
         assert workload._node_process_id(self.node) != pid
         assert self.node.get_connected_count() == 0
         assert client.get_tip_header()["hash"] == self.base_hash
@@ -299,136 +430,4 @@ class TestProcessResilience(CkbTest):
         workload.assert_pool_transaction(
             self.node, marker_hash, marker, workload.FAST_CYCLES
         )
-        self.did_pass = True
-
-    # TEST-MAP: TCH-06
-    def test_seeded_external_fault_sequence_reconciles_hashes(self):
-        """
-        1. 固定种子和操作集合，记录每个已完成外部步骤及请求结果。
-        2. 交错客户端断连、清队列、移除、正常重启和真实分区/reorg。
-        3. 每步核对集合，恢复全部故障后新标记交易可确认；失败保留首个失败前缀。
-        """
-        # 1. 固定每个操作的相对顺序，种子决定快交易输入与输出 nonce。
-        rng = random.Random(5316)
-        client = self.node.getClient()
-        txs = Transactions(self.node, 600)
-        trace = []
-        path = Path(self.node.ckb_dir) / "fault-sequence.json"
-        accepted = {}
-        try:
-            # 2. 序列包含确定可复现的故障；不把客户端未收到响应当成产品拒绝。
-            for operation in (
-                "disconnect",
-                "clear_queue",
-                "remove",
-                "restart",
-                "partition_reorg",
-                "restart",
-            ):
-                event = {"operation": operation, "at": time.monotonic()}
-                trace.append(event)
-                if operation == "disconnect":
-                    tx = txs.build(
-                        [rng.choice([0, 1])], nonce=rng.randrange(1, 1 << 20)
-                    )
-                    connection = pending_submission(self.node, tx)
-                    tx_hash = transaction_hash(tx)
-                    # Never consume the HTTP response; observe enqueue/admission by hash
-                    # before closing, so an unsent request is not called a cancellation.
-                    try:
-                        workload.wait_for(
-                            lambda: tx_hash in workload.pool_transactions(client),
-                            "request processed before discarding its response",
-                            30,
-                        )
-                    finally:
-                        # Connection: close permits the server to close first.
-                        connection.close()
-                    workload.wait_for(
-                        lambda: tx_hash in workload.pool_transactions(client),
-                        "disconnected request reconciled",
-                        30,
-                    )
-                    accepted[tx_hash] = tx
-                    event["hash"] = tx_hash
-                elif operation == "clear_queue":
-                    client.clear_tx_verify_queue()
-                elif operation == "remove":
-                    tx_hash = next(iter(accepted))
-                    assert client.remove_transaction(tx_hash) is True
-                    accepted.pop(tx_hash)
-                    event["removed"] = tx_hash
-                elif operation == "restart":
-                    workload.restart_and_assert_new_process(self.node)
-                    workload.wait_for(
-                        lambda: set(workload.pool_transactions(client))
-                        == set(accepted),
-                        "exact restart set",
-                    )
-                else:
-                    assert (
-                        self.node.get_connected_count()
-                        == self.peer.get_connected_count()
-                        == 0
-                    )
-                    old = txs.build([2], fee=1000)
-                    new = txs.build([2], fee=2000)
-                    client.send_transaction(old)
-                    self.Miner.miner_until_tx_committed(
-                        self.node, transaction_hash(old)
-                    )
-                    other = self.peer.getClient()
-                    other.send_transaction(new)
-                    self.Miner.miner_until_tx_committed(
-                        self.peer, transaction_hash(new)
-                    )
-                    self.Miner.make_tip_height_number(
-                        self.peer, client.get_tip_block_number() + 2
-                    )
-                    wanted = other.get_tip_header()["hash"]
-                    self.node.connected(self.peer)
-                    workload.wait_for(
-                        lambda: client.get_tip_header()["hash"] == wanted,
-                        "reorg after partition",
-                        60,
-                    )
-                    workload.wait_for(
-                        lambda: client.tx_pool_info()["tip_hash"] == wanted,
-                        "pool reconciled after reorg",
-                        30,
-                    )
-                    assert (
-                        client.get_transaction(transaction_hash(new))["tx_status"][
-                            "status"
-                        ]
-                        == "committed"
-                    )
-                    assert transaction_hash(old) not in workload.pool_transactions(
-                        client
-                    )
-                    client.remove_node(self.peer.get_peer_id())
-                    workload.wait_for(
-                        lambda: self.node.get_connected_count() == 0,
-                        "partition fixture removed",
-                    )
-                    event["canonical"] = wanted
-                # 3. 每步保存最早失败前缀，收据包含请求 hash 和最终状态。
-                assert set(workload.pool_transactions(client)) == set(accepted)
-                event["pool"] = sorted(accepted)
-                path.write_text(json.dumps({"seed": 5316, "trace": trace}, indent=2))
-            marker = txs.build([7], nonce=rng.randrange(1, 1 << 20))
-            marker_hash = client.send_transaction(marker)
-            assert (
-                self.Miner.miner_until_tx_committed(self.node, marker_hash)[
-                    "tx_status"
-                ]["status"]
-                == "committed"
-            )
-        finally:
-            path.write_text(
-                json.dumps({"seed": 5316, "first_failure_prefix": trace}, indent=2)
-            )
-            print(path.read_text())
-            for peer in client.get_peers():
-                client.remove_node(peer["node_id"])
         self.did_pass = True

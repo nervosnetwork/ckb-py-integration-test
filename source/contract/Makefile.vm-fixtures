@@ -4,9 +4,7 @@ CKB_STDLIB ?= tmp/ckb-c-stdlib
 STDLIB_COMMIT ?= 6bf2bca668e0db5f9eb120eb78b31782899ef90d
 OUT ?= tmp/vm-fixtures
 
-VM_FIXTURES := current_cycles exec_callee exec_caller_from_cell_data \
-  spawn_callee_current_cycles spawn_callee_exec_callee spawn_callee_exec_caller \
-  spawn_caller_current_cycles spawn_caller_exec
+VM_FIXTURES := current_cycles
 
 TARGET_FLAGS := --target=riscv64-unknown-elf -march=rv64imc -mabi=lp64
 CFLAGS := -O3 -fno-builtin -nostdinc -nostdlib -fuse-ld=lld \
@@ -23,7 +21,7 @@ check-deps:
 	@test -f "$(CKB_STDLIB)/ckb_syscalls.h" || { echo "Prepare CKB_STDLIB as described in README.vm-fixtures.md"; exit 1; }
 	@test "$$(git -C "$(CKB_STDLIB)" rev-parse HEAD)" = "$(STDLIB_COMMIT)" || { echo "CKB_STDLIB commit differs from STDLIB_COMMIT"; exit 1; }
 
-$(OUT)/%: %.c spawn_utils.h $(STDLIB_INPUTS) Makefile.vm-fixtures | check-deps
+$(OUT)/%: %.c $(STDLIB_INPUTS) Makefile.vm-fixtures | check-deps
 	@mkdir -p "$(OUT)"
 	$(RISCV_CLANG) $(TARGET_FLAGS) $(CFLAGS) $(LDFLAGS) "$<" -o "$@"
 

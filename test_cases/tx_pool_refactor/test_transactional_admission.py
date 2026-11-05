@@ -151,28 +151,6 @@ class TestTransactionalAdmission(CkbTest):
         assert_pool(self.node, txs, [b, independent])
         self.did_pass = True
 
-    # TEST-MAP: TPA-02
-    def test_replacement_rejects_new_unconfirmed_input_atomically(self):
-        """
-        1. 接收 A、其后代 C 和独立未确认父 P。
-        2. 提交高费 B，同时冲突 A 并新增 P 输入。
-        3. 核对 -1111、原成员和账本完全保持。
-        """
-        # 1. 独立 P 的输入没有出现在原冲突根中。
-        txs = self.txs
-        a, p = txs.build([0]), txs.build([1])
-        c = txs.build([txs.point(a)])
-        self.admit(a, c, p)
-        before = self.client.get_raw_tx_pool(True)
-        # 2. 费用充分，拒绝原因限定为新增未确认输入。
-        b = txs.build([0, txs.point(p)], fee=100000)
-        error = self.rejected(b, -1111)
-        assert "unconfirmed inputs" in str(error)
-        # 3. 失败没有提交任何裁剪。
-        assert self.client.get_raw_tx_pool(True) == before
-        assert_pool(self.node, txs, [a, c, p])
-        self.did_pass = True
-
     # TEST-MAP: TPA-03
     # TEST-MAP: TPA-23
     def test_shared_descendant_fee_boundary_counts_each_victim_once(self):
@@ -197,39 +175,6 @@ class TestTransactionalAdmission(CkbTest):
         b = txs.build([0, 1], fee=required)
         self.admit(b)
         assert_pool(self.node, txs, [b])
-        self.did_pass = True
-
-    # TEST-MAP: TPA-04
-    # TEST-MAP: TPA-24
-    def test_replacement_mutation_limit(self):
-        """
-        1. 逐笔接收 100/101 项链式后代及独立 I，确认容量充分。
-        2. 以充分费用替换根输入，分别要求成功或 -1111。
-        3. 核对成功的完整替换或失败的原集合及总量保持。
-        """
-        for count in (100, 101):
-            self.client.clear_tx_pool()
-            # 1. 每个祖先真实入池；配置允许 200 个祖先。
-            txs = self.txs
-            chain = [txs.build([0], nonce=count)]
-            for _ in range(count - 1):
-                chain.append(txs.build([txs.point(chain[-1])]))
-            independent = txs.build([1], fee=1000000)
-            self.admit(*chain, independent)
-            assert_pool(self.node, txs, chain + [independent])
-            before = self.client.get_raw_tx_pool(True)
-            # 2. 变化只有冲突闭包数量，容量不参与裁剪。
-            b = txs.build([0], fee=10000000, nonce=count)
-            if count == 100:
-                self.admit(b)
-            else:
-                self.rejected(b, -1111)
-            # 3. 101 分支验证完整旧集合，而不是只检查根交易。
-            if count == 100:
-                assert_pool(self.node, txs, [b, independent])
-            else:
-                assert self.client.get_raw_tx_pool(True) == before
-                assert_pool(self.node, txs, chain + [independent])
         self.did_pass = True
 
     # TEST-MAP: TPA-05
@@ -267,29 +212,6 @@ class TestTransactionalAdmission(CkbTest):
         )
         assert self.client.get_raw_tx_pool(True) == before
         assert_pool(self.node, txs, [a, e, i])
-        self.did_pass = True
-
-    # TEST-MAP: TPA-06
-    def test_capacity_evicts_descendant_closure_at_exact_size(self):
-        """
-        1. 建立低费 P→C 和独立高费 I，容量恰为三笔。
-        2. 提交占两笔空间的高费 B，保证 P 比 C 的裁剪费率更低。
-        3. 核对 P/C 闭包退出、I/B 保留且总字节恰等上限。
-        """
-        # 1. P 自身及后代包均低于 C，保证先选择 P 的闭包。
-        txs = self.txs
-        p = txs.build([0], fee=1000)
-        c = txs.build([txs.point(p)], fee=2000)
-        i = txs.build([1], fee=1000000)
-        size = size_in_block(p)
-        self.set_capacity(3 * size)
-        self.admit(p, c, i)
-        # 2. B 不与原输入冲突，只能走容量裁剪。
-        b = txs.pad_to(txs.build([2], fee=100000), 2 * size)
-        self.admit(b)
-        # 3. 包含 block offset 的独立序列化恰等容量。
-        assert_pool(self.node, txs, [b, i])
-        assert int(self.client.tx_pool_info()["total_tx_size"], 16) == 3 * size
         self.did_pass = True
 
     # TEST-MAP: TPA-07

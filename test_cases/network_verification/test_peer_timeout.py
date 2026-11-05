@@ -3,6 +3,8 @@
 from framework.basic import CkbTest
 from pathlib import Path
 import toml
+import requests
+from test_cases.tx_pool_refactor.dao_precheck.support import transaction_hash
 from test_cases.network_verification import workload
 
 
@@ -126,6 +128,10 @@ class TestRemoteTimeBudgetPeer(CkbTest):
             workload.sync_blocks(cls.source, cls.receiver, 1, 30)
             workload.sync_blocks(cls.source, cls.other, 1, 30)
         except Exception:
+            for node in cls.nodes:
+                log = Path(node.ckb_dir) / "node.log"
+                if log.exists():
+                    print(f"{log}:\n{log.read_text(errors='replace')[-8000:]}")
             cls.teardown_class()
             raise
 
@@ -137,6 +143,32 @@ class TestRemoteTimeBudgetPeer(CkbTest):
             workload.save_node_logs(node)
             node.clean()
 
+    @staticmethod
+    def submit_slow(node, tx):
+        # 服务端 408 只结束 HTTP 等待；按原 hash 观察完成，绝不重交交易。
+        tx_hash = transaction_hash(tx)
+        response = requests.post(
+            node.getClient().url,
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "send_transaction",
+                "params": [tx, "passthrough"],
+            },
+            timeout=workload.BUDGET_RPC_TIMEOUT,
+        )
+        assert response.status_code in (200, 408), (response.status_code, response.text)
+        if response.status_code == 200:
+            assert response.json().get("result") == tx_hash, response.text
+        print({"local_submission": tx_hash, "http_status": response.status_code})
+        workload.wait_for(
+            lambda: tx_hash in workload.pool_transactions(node.getClient()),
+            f"original local submission {tx_hash} accepted",
+            workload.BUDGET_RPC_TIMEOUT,
+        )
+        return tx_hash
+
+    # TEST-MAP: EVT-04
     # TEST-MAP: EVT-05
     # TEST-MAP: VT2-01
     # TEST-MAP: VT2-02
@@ -145,6 +177,7 @@ class TestRemoteTimeBudgetPeer(CkbTest):
         1. 发送慢交易，让 默认预算接收节点触发网络验证超时。
         2. 另一节点重发相同交易，验证接收节点仍会重新请求并验证。
         3. 原发送节点继续转发快交易，检查成功入池、连接保留且没有封禁。
+        4. 隔离所有对端，本地提交同一慢交易，核对 hash、交易体和 cycles。
         """
         source = self.source
         receiver = self.receiver
@@ -160,12 +193,7 @@ class TestRemoteTimeBudgetPeer(CkbTest):
             ),
             "expected peer connection",
         )
-        tx_hash = source.getClient().call(
-            "send_transaction",
-            [slow, "passthrough"],
-            try_count=1,
-            timeout=workload.BUDGET_RPC_TIMEOUT,
-        )
+        tx_hash = self.submit_slow(source, slow)
         # 本地 cycles 仅作跨入口一致性对照；不作为独立 VM 基准。
         cycles = int(
             workload.pool_transactions(source.getClient())[tx_hash]["cycles"], 16
@@ -173,6 +201,7 @@ class TestRemoteTimeBudgetPeer(CkbTest):
         assert 0 < cycles < 1_000_000_000_000
         workload.assert_pool_transaction(source, tx_hash, slow, cycles)
         workload.assert_remote_budget_refusal(receiver, tx_hash)
+        assert workload.transaction_requests(source, tx_hash)
 
         # 2. 另一节点重发相同交易，检查新增请求和第二次验证超时。
         refusals = len(workload.remote_refusals(receiver, tx_hash))
@@ -186,15 +215,7 @@ class TestRemoteTimeBudgetPeer(CkbTest):
             ),
             "expected peer connection",
         )
-        assert (
-            other.getClient().call(
-                "send_transaction",
-                [slow, "passthrough"],
-                try_count=1,
-                timeout=workload.BUDGET_RPC_TIMEOUT,
-            )
-            == tx_hash
-        )
+        assert self.submit_slow(other, slow) == tx_hash
         workload.wait_for(
             lambda: len(workload.transaction_requests(other, tx_hash))
             > requests_before,
@@ -217,4 +238,16 @@ class TestRemoteTimeBudgetPeer(CkbTest):
             receiver.getClient().get_transaction(tx_hash)["tx_status"]["status"]
             == "unknown"
         )
+        # 4. 默认预算不变，本地提交沿用同一 hash 和原始交易体。
+        for node in (source, receiver, other):
+            for connected in node.getClient().get_peers():
+                node.getClient().remove_node(connected["node_id"])
+        workload.wait_for(
+            lambda: all(
+                node.get_connected_count() == 0 for node in (source, receiver, other)
+            ),
+            "all peers isolated",
+        )
+        assert self.submit_slow(receiver, slow) == tx_hash
+        workload.assert_pool_transaction(receiver, tx_hash, slow, cycles)
         self.did_pass = True

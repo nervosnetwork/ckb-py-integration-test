@@ -15,14 +15,12 @@ from test_cases.tx_pool_refactor.admission_fixture import (
 )
 from test_cases.tx_pool_refactor.dao_precheck.support import ckb_hash, transaction_hash
 from test_cases.tx_pool_refactor.relay_v3_codec import raw_transaction_hash
-from test_cases.tx_pool_refactor.tests import (
-    test_23_pr5316_public_pool_rpc as public_pool,
-)
+from test_cases.tx_pool_refactor import test_witness_revalidation as public_pool
 
 independent_size = public_pool.TestPublicPoolRpc._serialized_size_in_block
 from test_cases.tx_pool_refactor.subscription_client import SubscriptionClient
 from test_cases.tx_pool_refactor.tcp_response_gate import ResponseGate
-from test_cases.tx_pool_refactor.test_pool_performance import percentiles
+from test_cases.tx_pool_refactor.extended.performance import percentiles
 
 
 def fixture_transactions():

@@ -6,7 +6,7 @@ from pathlib import Path
 
 from framework.basic import CkbTest
 from test_cases.network_verification import workload
-from test_cases.tx_pool_refactor.tests.test_29_pr5316_persistence_replay import (
+from test_cases.tx_pool_refactor.test_persistence_replay import (
     _transactions,
 )
 

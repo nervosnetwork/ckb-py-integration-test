@@ -1,13 +1,12 @@
 # VM test contract sources
 
-The eight `current_cycles`, `exec_*` and `spawn_*` ELF files added for the
-network-verification regressions have their corresponding C sources alongside
-them. `spawn_utils.h` is their shared upstream helper. Sources and existing
-ELFs are copied unchanged from CKB
+The retained `current_cycles` ELF has its matching `current_cycles.c` source.
+Both are copied unchanged from CKB
 [`c2596c9d2ea161afbeb9ba905b66a34454aaef27`, `script/testdata`](https://github.com/nervosnetwork/ckb/tree/c2596c9d2ea161afbeb9ba905b66a34454aaef27/script/testdata).
-`vm-fixtures.json` records the source and ELF SHA-256 values, and `COPYING.ckb`
+`vm-fixtures.json` records source and ELF SHA-256 values, and `COPYING.ckb`
 retains the upstream license. `cpu_budget_stress_1b` is maintained here as
-`cpu_budget_stress_1b.S` plus its linker script.
+`cpu_budget_stress_1b.S` plus its linker script. Unused exec/spawn fixtures and
+their sources were removed with the deferred VM matrix.
 
 ## Edit and build
 
