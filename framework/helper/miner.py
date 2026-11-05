@@ -124,7 +124,12 @@ def block_template_transfer_to_submit_block(block, version="0x0"):
             "version": version,
         },
         "extension": block["extension"],
-        "uncles": [],
+        # Proposals in selected uncles are omitted from the template's own list.
+        # Preserve them so transactions can advance after a reorg.
+        "uncles": [
+            {"header": uncle["header"], "proposals": uncle["proposals"]}
+            for uncle in block["uncles"]
+        ],
         "transactions": block["transactions"],
         "proposals": block["proposals"],
     }

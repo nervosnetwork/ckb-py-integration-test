@@ -30,6 +30,7 @@ test_cases := \
     test_cases/contracts \
     test_cases/example \
     test_cases/framework \
+    test_cases/network_verification \
     test_cases/light_client \
     test_cases/mocking \
     test_cases/node_compatible \
@@ -47,7 +48,8 @@ test_cases := \
 	test_cases/poc \
 	test_cases/v208 \
 	test_cases/v209 \
-	test_cases/v210
+	test_cases/v210 \
+	test_cases/network_verification
 
 
 

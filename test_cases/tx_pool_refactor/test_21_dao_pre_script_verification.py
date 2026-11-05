@@ -10,6 +10,8 @@ import time
 from pathlib import Path
 
 import toml
+import requests
+
 
 from framework.basic import CkbTest
 from test_cases.tx_pool_refactor.dao_precheck.support import (
@@ -378,17 +380,32 @@ class TestDaoPreScriptVerification(CkbTest):
         self.did_pass = True
 
     # TEST-MAP: DAOQ-06
+    # TEST-MAP: VT2-26
     def test_lock_size_boundary_and_index(self):
+        """
+        1. 交错准备 DAO 和普通 cell，DAO cell 位于索引 0、2、4。
+        2. 将各 DAO 输出的 lock args 长度改为 19 或 21 字节，核对错误字段和索引。
+        3. 用正确的 lock args 构造对照交易，检查预检通过并成功上链。
+        """
+        # 1. 交错创建 DAO 与普通 cell，覆盖 0、2、4 三个 DAO 索引。
         cells = self._create_cells((True, False, True, False, True))
+
+        # 2. 分别破坏 DAO lock 长度，检查两个 RPC 拒绝且交易没有进入池。
         for index in (0, 2, 4):
             for delta in (-1, 1):
                 with self.subTest(index=index, delta=delta):
                     tx = self._prepare_withdraw(cells)
                     tx["outputs"][index]["lock"]["args"] = "0x" + "11" * (20 + delta)
-                    with self.assertRaises(Exception) as error:
-                        self.client.test_tx_pool_accept(tx, "passthrough")
-                    assert_dao_error(error.exception, "lock", index)
-                    self._assert_absent(tx)
+                    for method in ("test_tx_pool_accept", "send_transaction"):
+                        with self.assertRaises(Exception) as error:
+                            self.client.call(method, [tx, "passthrough"])
+                        assert_dao_error(error.exception, "lock", index)
+                        self._assert_absent(tx)
+
+        # 3. 恢复正确的 lock 长度，检查合法准备提取交易可以确认。
+        control = self._prepare_withdraw(cells)
+        self.client.test_tx_pool_accept(control, "passthrough")
+        self._commit(self.client.send_transaction(control))
         self.did_pass = True
 
     # TEST-MAP: DAOQ-10
@@ -467,4 +484,48 @@ class TestDaoPreScriptVerification(CkbTest):
         assert entry["cycles"] == expected["cycles"] and entry["fee"] == expected["fee"]
         assert self.client.get_block_hash(old_header["number"]) != old_block
         assert self._commit(tx_hash) != old_block
+        self.did_pass = True
+
+    # TEST-MAP: VT2-54
+    def test_dao_withdraw_requires_withdrawing_header(self):
+        """
+        1. 完成 DAO 准备提取并构造包含完整 header_deps 的最终提取交易。
+        2. 删除准备提取区块头，检查两个 RPC 返回 -1108 和 InvalidOutPoint。
+        3. 使用保留完整区块头依赖的对照交易，检查预检通过并成功上链。
+        """
+        # 1. 确认准备提取交易，取得所在区块头并构造有效的最终提取交易。
+        cells = self._create_cells()
+        prepare = self._prepare_withdraw(cells)
+        prepare_hash = self.client.send_transaction(prepare)
+        prepare_block = self._commit(prepare_hash)
+        valid = self._final_withdraw(cells, prepare, prepare_hash, prepare_block)
+
+        # 2. 仅删除准备提取所在区块的 header_dep，核对错误码、错误类型和未入池状态。
+        invalid = copy.deepcopy(valid)
+        assert invalid["header_deps"] == [cells["header"]["hash"], prepare_block]
+        invalid["header_deps"].remove(prepare_block)
+        for method in ("test_tx_pool_accept", "send_transaction"):
+            # 直接检查公开 RPC 响应，保留通用 RPC 异常封装会丢失的数值错误码。
+            response = requests.post(
+                self.client.url,
+                json={
+                    "id": 1,
+                    "jsonrpc": "2.0",
+                    "method": method,
+                    "params": [invalid, "passthrough"],
+                },
+                timeout=30,
+            )
+            response.raise_for_status()
+            error = response.json()["error"]
+            assert error["code"] == -1108, error
+            assert (
+                "Malformed" in error["message"]
+                and "InvalidOutPoint" in error["message"]
+            ), error
+            self._assert_absent(invalid)
+
+        # 3. 完整 header_deps 的对照交易应通过预检，并成功提交和确认。
+        self.client.test_tx_pool_accept(valid, "passthrough")
+        self._commit(self.client.send_transaction(valid))
         self.did_pass = True
