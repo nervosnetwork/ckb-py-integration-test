@@ -61,7 +61,7 @@ class TestCkbCli(CkbTest):
         )
         assert len(live_cells["live_cells"]) > 0
 
-    def test_06_account1_transfer_account2(self):
+    def test_06_account1_transfer_account2(self, max_tx_fee=None):
         transfer_balance = 100
 
         account2 = self.Ckb_cli.util_key_info_by_private_key(
@@ -79,6 +79,7 @@ class TestCkbCli(CkbTest):
             ckb_address,
             transfer_balance,
             api_url=self.node.getClient().url,
+            max_tx_fee=max_tx_fee,
         )
 
         # wait transfer tx committed
