@@ -1,5 +1,6 @@
 """真实 ckb-cli API 服务的认证与资金安全回归。"""
 
+import http.client
 import json
 import socket
 import subprocess
@@ -130,6 +131,20 @@ def port_is_closed(dev_node):
     with pytest.raises((ConnectionRefusedError, TimeoutError, OSError)):
         with socket.create_connection(("127.0.0.1", dev_node["api_port"]), timeout=1):
             pass
+
+
+def request_on_socket(connection, method, body=b"", headers=None):
+    wire_headers = [
+        f"Host: 127.0.0.1:{connection.getpeername()[1]}",
+        "Connection: keep-alive",
+        f"Content-Length: {len(body)}",
+    ]
+    wire_headers.extend(f"{key}: {value}" for key, value in (headers or {}).items())
+    request = f"{method} / HTTP/1.1\r\n" + "\r\n".join(wire_headers) + "\r\n\r\n"
+    connection.sendall(request.encode("ascii") + body)
+    response = http.client.HTTPResponse(connection)
+    response.begin()
+    return response, response.read()
 
 
 # TEST-MAP: CLI-API-690-01
@@ -539,3 +554,210 @@ def test_wallet_server_cannot_listen_on_all_interfaces(dev_node):
 
         # 3. 不能已有外部监听端口提供服务。
         port_is_closed(dev_node)
+
+
+# TEST-MAP: CLI-API-690-07
+@pytest.mark.parametrize("prefix", ["authenticated_read", "preflight"])
+def test_keep_alive_auth_is_checked_for_each_request(dev_node, prefix):
+    """
+    1. 建立有资金的同一钱包服务、空交易池和双方余额基线。
+    2. 在固定 TCP 连接上先认证查询，或发送无认证且空 body 的 OPTIONS。
+    3. 同一连接发送无认证的合法转账，检查 401 和 Bearer challenge。
+    4. 检查交易池为空，出块同步后双方余额不变。
+    5. 同一 API 进程只补正确 token 转账，检查真实确认和收款增加 61 CKB。
+    """
+    # 1. 真实节点和钱包均健康，负请求前收款地址无资金。
+    with server_process(dev_node) as (api_url, process, _, log_path):
+        wait_for_rpc(
+            process,
+            api_url,
+            "get_capacity_by_address",
+            [ADDRESS],
+            log_path,
+            headers=GOOD_HEADERS,
+        )
+        pid = process.pid
+        sender_before = capacity(api_url, SENDER_ADDRESS, 1)
+        receiver_before = capacity(api_url, ADDRESS, 2)
+        assert sender_before["total"] > AMOUNT, sender_before
+        assert receiver_before == {"total": 0, "immature": 0, "dao": 0}
+        empty_pool(dev_node["node_url"], 3)
+        transfer_body = json.dumps(transfer_payload()).encode("ascii")
+        post_headers = {"Content-Type": "application/json"}
+        failures = []
+
+        with socket.create_connection(
+            ("127.0.0.1", dev_node["api_port"]), timeout=5
+        ) as connection:
+            connection.settimeout(5)
+            original_socket = connection
+            original_fileno = connection.fileno()
+            original_peer = connection.getpeername()
+
+            # 2. 前置请求的响应必须在可复用的原 socket 上完整读完。
+            if prefix == "authenticated_read":
+                read_body = json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 41,
+                        "method": "get_capacity_by_address",
+                        "params": [ADDRESS],
+                    }
+                ).encode("ascii")
+                first, first_body = request_on_socket(
+                    connection,
+                    "POST",
+                    read_body,
+                    {**post_headers, **GOOD_HEADERS},
+                )
+                assert first.version == 11, first.version
+                assert first.status == 200, (first.status, first_body)
+                read_result = json.loads(first_body)
+                assert read_result.get("jsonrpc") == "2.0", read_result
+                assert read_result.get("id") == 41, read_result
+                assert "error" not in read_result, read_result
+                assert read_result.get("result") == receiver_before, read_result
+            else:
+                origin = "https://example.com"
+                first, first_body = request_on_socket(
+                    connection,
+                    "OPTIONS",
+                    headers={
+                        "Origin": origin,
+                        "Access-Control-Request-Method": "POST",
+                        "Access-Control-Request-Headers": "authorization, content-type",
+                    },
+                )
+                assert first.version == 11, first.version
+                assert first.status == 200, (first.status, first_body)
+                assert first.getheader("Access-Control-Allow-Origin") == origin
+                assert "POST" in first.getheader("Access-Control-Allow-Methods", "")
+                allowed_headers = first.getheader(
+                    "Access-Control-Allow-Headers", ""
+                ).lower()
+                assert "authorization" in allowed_headers
+                assert "content-type" in allowed_headers
+                assert not first_body.strip(), first_body
+            assert connection is original_socket
+            assert connection.fileno() == original_fileno
+            assert connection.getpeername() == original_peer
+
+            # 3. 请求体为可执行的合法转账；即使响应错误，也继续观察真实资金。
+            try:
+                denied, denied_body = request_on_socket(
+                    connection, "POST", transfer_body, post_headers
+                )
+                assert denied.version == 11, denied.version
+                assert denied.status == 401, (denied.status, denied_body)
+                assert denied.getheader("WWW-Authenticate") == "Bearer"
+                assert AUTH_TOKEN.encode("ascii") not in denied_body, denied_body
+                assert AUTH_TOKEN not in denied.reason, denied.reason
+                assert AUTH_TOKEN not in str(denied.getheaders()), denied.getheaders()
+                assert connection is original_socket
+                assert connection.fileno() == original_fileno
+                assert connection.getpeername() == original_peer
+            except (OSError, http.client.HTTPException, AssertionError) as error:
+                failures.append(f"同一连接未认证转账响应: {error!r}")
+
+            # 4. 节点交易池与出块后的双方余额独立于 HTTP 拒绝状态验证。
+            try:
+                empty_pool(dev_node["node_url"], 4)
+            except (requests.RequestException, AssertionError) as error:
+                failures.append(f"未认证转账后的交易池: {error!r}")
+            try:
+                mine_and_sync(dev_node["node_url"])
+            except (requests.RequestException, AssertionError) as error:
+                failures.append(f"未认证转账后的出块和 indexer: {error!r}")
+            try:
+                assert capacity(api_url, SENDER_ADDRESS, 5) == sender_before
+                assert capacity(api_url, ADDRESS, 6) == receiver_before
+            except (requests.RequestException, AssertionError) as error:
+                failures.append(f"未认证转账后的资金状态: {error!r}")
+
+        # 5. 401 后服务可以关闭连接；原进程仍须接受相同 body 的合法转账。
+        try:
+            authorized = requests.post(
+                api_url,
+                data=transfer_body,
+                headers={**post_headers, **GOOD_HEADERS},
+                timeout=5,
+            )
+            tx_hash = transaction_hash(authorized)
+            transaction = confirm_transaction(dev_node["node_url"], tx_hash)
+            assert transaction["tx_status"]["status"] == "committed", transaction
+            sender_after = capacity(api_url, SENDER_ADDRESS, 7)
+            receiver_after = capacity(api_url, ADDRESS, 8)
+            assert receiver_after["total"] == receiver_before["total"] + AMOUNT
+            assert receiver_after["immature"] == receiver_before["immature"]
+            assert receiver_after["dao"] == receiver_before["dao"]
+            assert sender_after["total"] <= sender_before["total"] - AMOUNT
+        except (requests.RequestException, AssertionError) as error:
+            failures.append(f"同一进程认证后真实转账: {error!r}")
+
+        if process.pid != pid or process.poll() is not None:
+            failures.append("原 API 进程已变化或退出")
+        assert not failures, "\n".join(failures)
+
+
+# TEST-MAP: CLI-API-690-08
+def test_unauthorized_headers_are_rejected_without_request_body(dev_node):
+    """
+    1. 建立健康的钱包服务、空交易池和正确认证查询基线。
+    2. 原始 TCP 只发送无认证 POST 请求头，声明 1 MiB body 却不发送正文。
+    3. 在 5 秒内检查 401、Bearer challenge 和响应没有泄露 token。
+    4. 检查同一 API 进程仍存活、交易池为空且正确认证查询继续成功。
+    """
+    # 1. 前置查询证明原服务和节点可用，且交易池确实为空。
+    with server_process(dev_node) as (api_url, process, _, log_path):
+        wait_for_rpc(
+            process,
+            api_url,
+            "get_capacity_by_address",
+            [ADDRESS],
+            log_path,
+            headers=GOOD_HEADERS,
+        )
+        pid = process.pid
+        baseline = capacity(api_url, ADDRESS, 1)
+        assert baseline == {"total": 0, "immature": 0, "dao": 0}, baseline
+        empty_pool(dev_node["node_url"], 2)
+        failures = []
+
+        # 2. Content-Length 声明大正文，但最后一个 CRLF 后不发任何 body 字节。
+        with socket.create_connection(
+            ("127.0.0.1", dev_node["api_port"]), timeout=5
+        ) as connection:
+            connection.settimeout(5)
+            headers_only = (
+                f"POST / HTTP/1.1\r\nHost: 127.0.0.1:{dev_node['api_port']}\r\n"
+                "Content-Type: application/json\r\nContent-Length: 1048576\r\n"
+                "Connection: keep-alive\r\n\r\n"
+            ).encode("ascii")
+            connection.sendall(headers_only)
+
+            # 3. 等待响应最多 5 秒；旧版等正文会在这里超时而记录失败。
+            try:
+                started = time.monotonic()
+                rejected = http.client.HTTPResponse(connection)
+                rejected.begin()
+                rejected_body = rejected.read()
+                assert time.monotonic() - started < 5
+                assert rejected.status == 401, (rejected.status, rejected_body)
+                assert rejected.getheader("WWW-Authenticate") == "Bearer"
+                assert AUTH_TOKEN.encode("ascii") not in rejected_body, rejected_body
+                assert AUTH_TOKEN not in rejected.reason, rejected.reason
+                assert AUTH_TOKEN not in str(
+                    rejected.getheaders()
+                ), rejected.getheaders()
+            except (OSError, http.client.HTTPException, AssertionError) as error:
+                failures.append(f"仅请求头的未认证 POST 响应: {error!r}")
+
+        # 4. 慢请求不能破坏原服务，响应失败也必须继续独立检查服务状态。
+        try:
+            empty_pool(dev_node["node_url"], 3)
+            assert capacity(api_url, ADDRESS, 4) == baseline
+        except (requests.RequestException, AssertionError) as error:
+            failures.append(f"头阶段请求后的交易池或认证查询: {error!r}")
+        if process.pid != pid or process.poll() is not None:
+            failures.append("原 API 进程已变化或退出")
+        assert not failures, "\n".join(failures)
