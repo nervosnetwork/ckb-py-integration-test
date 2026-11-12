@@ -1,5 +1,6 @@
 import json
 import re
+import shlex
 from functools import wraps
 
 import yaml
@@ -110,6 +111,7 @@ def wallet_transfer_by_private_key(
     capacity,
     api_url="http://127.0.0.1:8114",
     fee_rate="1000",
+    max_tx_fee=None,
 ):
     """
     MacBook-Pro-4 0.111.0 % MacBook-Pro-4 0.111.0 % export API_URL=http://127.0.0.1:8115 &&  echo
@@ -128,10 +130,16 @@ def wallet_transfer_by_private_key(
     Args:
         api_url: default ckb rpc url
         fee_rate: default tx fee
+        max_tx_fee: optional maximum transaction fee in CKB, e.g. "0.001"
     """
+    max_tx_fee_arg = (
+        f" --max-tx-fee {shlex.quote(str(max_tx_fee))}"
+        if max_tx_fee is not None
+        else ""
+    )
     cmd = (
         f"export API_URL={api_url} &&  echo {private_key} > /tmp/tmp.data && {cli_path} wallet transfer "
-        f"--privkey-path /tmp/tmp.data --to-address  {to_ckb_address}  --capacity {capacity}  --fee-rate {fee_rate} --skip-check-to-address "
+        f"--privkey-path /tmp/tmp.data --to-address  {to_ckb_address}  --capacity {capacity}  --fee-rate {fee_rate} --skip-check-to-address{max_tx_fee_arg} "
         f" && rm /tmp/tmp.data"
     )
     return run_command(cmd).replace("\n", "")

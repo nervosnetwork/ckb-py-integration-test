@@ -1,0 +1,2 @@
+- model: gpt-6-sol | cases: CLI-API-690 | feedback: 我启用了daybreak 麻烦帮我再想想更多的安全方面的问题 不要她改什么你测什么 这样的测试很局限
+- model: gpt-6-sol | cases: CLI-API-690 | feedback: 691已经测过了 不用管了吧 你专注自己的用例就行 我放到一个pr主要是为了省事情 关联程度没那么大吧

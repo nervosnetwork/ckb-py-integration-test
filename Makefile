@@ -1,4 +1,4 @@
-.PHONY: prepare test clean docs
+.PHONY: prepare test test-ckb-cli-api clean docs
 
 prepare:
 	python3 -m venv venv
@@ -64,6 +64,9 @@ test:
         rm -f failed_test_cases.txt; \
         exit 1; \
     fi
+
+test-ckb-cli-api:
+	python3 -m pytest -vv suites/ckb_cli/tests
 
 develop_test:
 	@failed_cases=; \
